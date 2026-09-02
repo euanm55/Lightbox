@@ -90,8 +90,11 @@ In the **Share with an AI** panel:
 **Whole study at once:** **Save a sheet for every series** writes one
 labelled contact-sheet PNG per series (a 300 MB study becomes ten or twenty
 images of a few hundred KB each). Drag them into the chat together with the
-study summary. **…as one zip** bundles the same sheets with `summary.md`; tick
-the box to add individual slices too, for chats that can open zips.
+study summary. **…as one zip** bundles the same sheets with `summary.md` and,
+beside each sheet, an `info.md` with the acquisition details and a table of
+which slice and position every tile shows. Tick the box to add individual
+slices too. The zip is split into numbered parts that stay under the chosen
+upload limit (25 MB by default, which is what Claude accepts).
 
 Patient name, ID and birth date are left out of everything unless you untick
 the privacy box.

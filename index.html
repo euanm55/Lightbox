@@ -380,6 +380,12 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
       <div class="row">
         <label class="chk" for="pack-slices"><input type="checkbox" id="pack-slices"> also put single slices in the zip, every <input type="number" id="pack-every" value="4" min="1" max="50" style="width:4em" title="Include every Nth slice in the zip"> slices</label>
       </div>
+      <div class="row">
+        <label for="pack-limit">Split zip above</label>
+        <select id="pack-limit" title="Chats cap uploads; parts stay under this size">
+          <option value="25" selected>25 MB (Claude)</option><option value="100">100 MB</option><option value="500">500 MB (ChatGPT)</option><option value="0">never split</option>
+        </select>
+      </div>
       <p class="note">For Claude Code or ChatGPT's code interpreter, the repository's <span class="mono">tools/dicom_export.py</span> produces the same pack from the original zip.</p>
     </section>
 
@@ -1549,11 +1555,30 @@ function studySummary(privacy = priv()) {
   return L.join('\n');
 }
 
+// Which slices go on a sheet: `want` of them spread evenly through the series.
+function sheetPicks(n, want) {
+  want = want ? Math.min(want, n) : n;
+  return want > 1 ? Array.from({ length: want }, (_, i) => Math.round(i * (n - 1) / (want - 1))) : [Math.floor(n / 2)];
+}
+// Acquisition details for a series, as short "key value" phrases.
+function acquisitionBits(s) {
+  const d = s.ds; const v = (t) => d.str(t); const num = (t) => { const x = d.num(t); return x == null ? null : fmt(x); };
+  const seq = [v(T.SequenceName), d.strs(T.ScanningSequence).join('/'), v(T.MRAcquisitionType)].filter(Boolean).join(' ');
+  return [
+    seq && `seq ${seq}`,
+    num(T.EchoTime) && `TE ${num(T.EchoTime)}`, num(T.RepetitionTime) && `TR ${num(T.RepetitionTime)}`, num(T.InversionTime) && `TI ${num(T.InversionTime)}`,
+    num(T.FlipAngle) && `flip ${num(T.FlipAngle)}°`, num(T.MagneticFieldStrength) && `${num(T.MagneticFieldStrength)} T`,
+    num(T.KVP) && `${num(T.KVP)} kVp`, v(T.ConvolutionKernel) && `kernel ${v(T.ConvolutionKernel)}`,
+    s.thickness != null && `thk ${fmt(s.thickness)} mm`, s.sliceGap() != null && `gap ${fmt(s.sliceGap())} mm`,
+    v(T.ContrastBolusAgent) && `contrast ${v(T.ContrastBolusAgent)}`, v(T.BodyPartExamined) && `${v(T.BodyPartExamined)}`,
+  ].filter(Boolean);
+}
+const SHEET_HEADER = 48;
+
 async function renderContactSheet(s, opts) {
-  const n = s.count; const want = opts.tiles ? Math.min(opts.tiles, n) : n;
-  const picks = want > 1 ? Array.from({ length: want }, (_, i) => Math.round(i * (n - 1) / (want - 1))) : [Math.floor(n / 2)];
+  const n = s.count; const picks = sheetPicks(n, opts.tiles); const want = picks.length;
   const tile = opts.tile; const cols = Math.min(want, Math.max(2, Math.ceil(Math.sqrt(want)))); const rows = Math.ceil(want / cols);
-  const header = 30; const c = document.createElement('canvas'); c.width = cols * tile; c.height = rows * tile + header;
+  const header = SHEET_HEADER; const c = document.createElement('canvas'); c.width = cols * tile; c.height = rows * tile + header;
   const cx = c.getContext('2d'); cx.fillStyle = '#000'; cx.fillRect(0, 0, c.width, c.height);
   const off = document.createElement('canvas'); const octx = off.getContext('2d', { willReadFrequently: true });
   const wc = opts.wc ?? (s.defaultWindow || {}).c, ww = opts.ww ?? (s.defaultWindow || {}).w;
@@ -1573,7 +1598,32 @@ async function renderContactSheet(s, opts) {
   const title = [opts.privacy ? '' : `${(ds.str(T.PatientName) || '').replace(/\^/g, ' ')} ${ds.str(T.PatientID) || ''}`.trim(), ds.str(T.StudyDate), `S${s.number ?? '?'} ${s.description}`, `${s.modality} ${s.plane}`.trim(), `${s.cols}×${s.rows} ×${n}`,
     s.spacing ? `${fmt(s.spacing[1], 2)}×${fmt(s.spacing[0], 2)}×${fmt(s.thickness)} mm` : '', s.isColor ? '' : `W/L ${fmt(ww)}/${fmt(wc)}`].filter(Boolean).join('  |  ');
   cx.fillText(title, 8, 20);
+  cx.font = '12px IBM Plex Mono, monospace'; cx.fillStyle = '#c9d1dc';
+  cx.fillText([...acquisitionBits(s), `slices ${n}`, `tiles show slice number and position along the slice normal`].join('  |  '), 8, 39);
   return c;
+}
+// Markdown that travels with a series' sheet, so each panel is self-describing.
+function seriesInfoMarkdown(s, si, opts, sheetFile) {
+  const d = s.ds; const picks = sheetPicks(s.count, opts.tiles);
+  const wc = opts.wc ?? (s.defaultWindow || {}).c, ww = opts.ww ?? (s.defaultWindow || {}).w;
+  const L = [`# Series ${si + 1}: S${s.number ?? '?'} ${s.description}`, ''];
+  const pf = (k, v) => { if (v != null && v !== '') L.push(`- ${k}: ${v}`); };
+  pf('Modality / plane', `${s.modality} ${s.plane}`.trim());
+  pf('Matrix', `${s.cols} × ${s.rows} px, ${s.count} slices`);
+  pf('Pixel spacing', s.spacing ? `${fmt(s.spacing[1], 2)} × ${fmt(s.spacing[0], 2)} mm (column × row)` : null);
+  pf('Slice thickness / gap', `${fmt(s.thickness)} / ${fmt(s.sliceGap())} mm`);
+  pf('Acquisition', acquisitionBits(s).join(', '));
+  pf('Image type', d.strs(T.ImageType).join('\\'));
+  pf('Protocol', d.str(T.ProtocolName));
+  pf('Window used (width / centre)', s.isColor ? 'colour image' : `${fmt(ww)} / ${fmt(wc)}${opts.invert ? ', inverted' : ''}`);
+  pf('Rescale', (s.instances[0].slope !== 1 || s.instances[0].intercept !== 0) ? `value = stored × ${s.instances[0].slope} + ${s.instances[0].intercept}` : null);
+  pf('Photometric', d.str(T.PhotometricInterpretation));
+  pf('Transfer syntax', TS_NAMES[s.ts] || s.ts);
+  pf('Sheet', sheetFile);
+  L.push('', `## Tiles on the sheet (${picks.length} of ${s.count}, left to right, top to bottom)`, '', '| Tile | Slice | Position (mm) | Instance | Source file |', '|---|---|---|---|---|');
+  picks.forEach((i, k) => { const { inst, frame } = s.instanceAt(i); L.push(`| ${k + 1} | ${i + 1} | ${inst.position != null ? fmt(inst.position) : ''} | ${inst.instanceNumber ?? ''}${inst.frames > 1 ? ` (frame ${frame + 1})` : ''} | ${inst.name.split('/').pop()} |`); });
+  L.push('', 'Position is the distance along the slice normal, so consecutive slices differ by the slice gap.');
+  return L.join('\n') + '\n';
 }
 function canvasBlob(c) { return new Promise(r => c.toBlob(r, 'image/png')); }
 // When published as a claude.ai artifact, files are handed over through the
@@ -1640,16 +1690,18 @@ async function saveAllSheets() {
 async function makePack() {
   if (!study.series.length) return toast('Load a study first', true);
   const withSlices = $('pack-slices').checked; const every = Math.max(1, +$('pack-every').value || 1); const files = []; const enc = new TextEncoder();
+  const limit = (+$('pack-limit').value || 0) * 1024 * 1024;
   const btn = $('btn-pack'); btn.disabled = true; btn.textContent = 'Building…';
   try {
-    const summary = [studySummary()];
+    const summary = [studySummary(), '', 'Each series folder holds `sheet.png` (a labelled contact sheet) and `info.md` (acquisition details and which slice each tile shows).'];
     const off = document.createElement('canvas'); const octx = off.getContext('2d', { willReadFrequently: true });
     for (let si = 0; si < study.series.length; si++) {
       const s = study.series[si]; const dir = `series_${String(si + 1).padStart(2, '0')}_${safeName(s.description)}`;
-      let sheet;
-      try { sheet = await renderContactSheet(s, sheetOptions(s)); } catch (e) { summary.push(`\nSeries ${si + 1}: could not render (${e.message})`); continue; }
-      files.push({ name: `${dir}/montage.png`, data: new Uint8Array(await (await canvasBlob(sheet)).arrayBuffer()) });
-      summary.push(`\n## Series ${si + 1}: ${s.description}\n- montage: ${dir}/montage.png`);
+      let sheet; const opts = sheetOptions(s);
+      try { sheet = await renderContactSheet(s, opts); } catch (e) { summary.push(`\nSeries ${si + 1}: could not render (${e.message})`); continue; }
+      files.push({ name: `${dir}/sheet.png`, data: new Uint8Array(await (await canvasBlob(sheet)).arrayBuffer()) });
+      files.push({ name: `${dir}/info.md`, data: enc.encode(seriesInfoMarkdown(s, si, opts, `${dir}/sheet.png`)) });
+      summary.push(`\n## Series ${si + 1}: ${s.description}\n- sheet: ${dir}/sheet.png\n- details: ${dir}/info.md`);
       setProgress((si + 1) / study.series.length); await nextFrame();
       const w = s.defaultWindow || { c: 128, w: 256 }; let written = 0;
       for (let i = 0; withSlices && i < s.count; i += every) {
@@ -1662,9 +1714,23 @@ async function makePack() {
       }
       if (withSlices) summary.push(`- slices: ${written} PNGs (every ${every} of ${s.count}), window ${fmt(w.w)}/${fmt(w.c)}`);
     }
-    files.unshift({ name: 'summary.md', data: enc.encode(summary.join('\n') + '\n') });
-    download(buildZip(files), `lightbox_pack_${safeName(study.ds.str(T.StudyDescription) || 'study')}.zip`);
-    toast(`Zip with ${files.length} files saved`);
+    const summaryFile = { name: 'summary.md', data: enc.encode(summary.join('\n') + '\n') };
+    // split into parts that stay under the upload limit; summary.md goes in every part
+    const parts = [[]]; let size = summaryFile.data.length + 200;
+    for (const f of files) {
+      const cost = f.data.length + f.name.length * 2 + 80;
+      if (limit && parts[parts.length - 1].length && size + cost > limit) { parts.push([]); size = summaryFile.data.length + 200; }
+      parts[parts.length - 1].push(f); size += cost;
+    }
+    const base = `lightbox_${safeName(study.ds.str(T.StudyDescription) || 'study')}`;
+    for (let k = 0; k < parts.length; k++) {
+      const name = parts.length > 1 ? `${base}_part${k + 1}of${parts.length}.zip` : `${base}.zip`;
+      const note = parts.length > 1 ? enc.encode(`\n\n(This is part ${k + 1} of ${parts.length}; the other parts hold the remaining series.)\n`) : new Uint8Array(0);
+      const sm = { name: 'summary.md', data: concat([summaryFile.data, note]) };
+      btn.textContent = `Saving ${k + 1}/${parts.length}…`;
+      await download(buildZip([sm, ...parts[k]]), name);
+    }
+    toast(parts.length > 1 ? `${files.length + 1} files saved as ${parts.length} zips, each under ${limit / 1048576} MB` : `Zip with ${files.length + 1} files saved`);
   } catch (e) { toast(e.message, true); }
   setProgress(null); btn.disabled = false; btn.textContent = '…as one zip';
 }

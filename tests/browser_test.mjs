@@ -100,7 +100,7 @@ if (screens) await page.screenshot({ path: path.join(screens, 'synthetic.png') }
 
 // exports
 const sheet = await page.evaluate(async () => { const c = await Lightbox.renderContactSheet(Lightbox.view.series, { tiles: 16, tile: 128, privacy: true }); return { w: c.width, h: c.height }; });
-ok(sheet.w === 512 && sheet.h === 512 + 30, `contact sheet 4x4 of 128 px tiles is ${sheet.w}x${sheet.h}`);
+ok(sheet.w === 512 && sheet.h === 512 + 48, `contact sheet 4x4 of 128 px tiles is ${sheet.w}x${sheet.h}`);
 const summary = await page.evaluate(() => Lightbox.studySummary(true));
 ok(summary.includes('| 1 | S1 T1 AX (explicit LE) | MR | axial | 96×96 | 24 |') && summary.includes('(hidden)'), 'study summary table row and privacy');
 await page.click('#btn-sheet'); await page.waitForFunction(() => !document.getElementById('btn-sheet-copy').disabled);
@@ -113,9 +113,22 @@ const packOk = await page.evaluate(async (b64) => {
   const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   const z = await Lightbox.readZip(u8.buffer); const names = z.entries.map(e => e.name);
   const md = new TextDecoder().decode(await z.readEntry(z.entries.find(e => e.name === 'summary.md')));
-  return { n: names.length, hasSummary: md.startsWith('# DICOM study summary'), montages: names.filter(n => n.endsWith('montage.png')).length };
+  const info = new TextDecoder().decode(await z.readEntry(z.entries.find(e => e.name.endsWith('series_01_T1_AX_explicit_LE/info.md'))));
+  return { n: names.length, hasSummary: md.startsWith('# DICOM study summary'), sheets: names.filter(n => n.endsWith('sheet.png')).length, infos: names.filter(n => n.endsWith('info.md')).length,
+    infoOk: /TE 10/.test(info) && /\| 1 \| 1 \| -48 \|/.test(info) && /Window used/.test(info) };
 }, fs.readFileSync(packPath).toString('base64'));
-ok(packOk.hasSummary && packOk.montages === 8, `AI pack has summary.md and 8 montages (${packOk.n} files)`);
+ok(packOk.hasSummary && packOk.sheets === 8 && packOk.infos === 8, `zip has summary.md, 8 sheets and 8 info.md (${packOk.n} files)`);
+ok(packOk.infoOk, 'info.md carries TE, the tile table with positions, and the window');
+// splitting: with a tiny limit the same export must arrive as several zips
+await page.evaluate(() => { const sel = document.getElementById('pack-limit'); sel.add(new Option('tiny', '0.25')); sel.value = '0.25'; });
+const partDownloads = [];
+page.on('download', d => partDownloads.push(d.suggestedFilename()));
+await page.click('#btn-pack');
+await page.waitForFunction(() => document.getElementById('btn-pack').textContent === '…as one zip' && !document.getElementById('btn-pack').disabled, null, { timeout: 60000 });
+await page.waitForTimeout(500);
+const parts = partDownloads.filter(n => /_part\d+of\d+\.zip$/.test(n));
+ok(parts.length >= 2 && parts.every(n => n.includes(`of${parts.length}`)), `0.25 MB limit splits the export into ${parts.length} zips: ${parts.join(', ')}`);
+await page.evaluate(() => { document.getElementById('pack-limit').value = '25'; });
 
 // one contact sheet per series, as separate downloads
 const sheetNames = [];
