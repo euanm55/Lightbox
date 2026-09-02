@@ -33,3 +33,5 @@ jobs:
           python tools/dicom_export.py sample/synthetic_mri.zip --list | head -5
       - name: Browser tests
         run: node tests/browser_test.mjs
+      - name: Phone layout and touch tests
+        run: node tests/mobile_test.mjs

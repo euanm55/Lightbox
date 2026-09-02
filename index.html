@@ -32,7 +32,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; overscroll-behavior: none; }
 body {
   background: var(--ground);
   color: var(--text);
@@ -126,7 +126,7 @@ kbd {
 
 /* ---- centre: viewport */
 #stage { position: relative; display: flex; flex-direction: column; min-width: 0; background: #000; }
-#viewport { position: relative; flex: 1; min-height: 0; cursor: crosshair; }
+#viewport { position: relative; flex: 1; min-height: 0; cursor: crosshair; touch-action: none; -webkit-user-select: none; user-select: none; }
 #viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #viewport.pan { cursor: grab; }
 #viewport.ruler { cursor: cell; }
@@ -184,6 +184,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 #alltags.show { display: block; }
 .note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
 .note.warn { color: var(--warn); }
+#sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; }
 #sheet-preview { margin-top: 8px; display: none; }
 #sheet-preview img { width: 100%; border: 1px solid var(--line); border-radius: 4px; display: block; }
 #sheet-preview .cap { font-size: 11px; color: var(--muted); margin-top: 4px; }
@@ -205,6 +206,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 .help .card { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; padding: 20px 24px; max-width: 560px; width: calc(100% - 40px); max-height: 85vh; overflow: auto; }
 .help h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
 .help table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.help h3 { margin: 12px 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
 .help td { padding: 3px 6px 3px 0; vertical-align: top; }
 .help td:first-child { white-space: nowrap; color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .help p { color: var(--muted); font-size: 13px; }
@@ -212,13 +214,52 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 @media (max-width: 1100px) {
   :root { --side: 280px; --rail: 200px; }
 }
+.mobile-only { display: none; }
+.touch-only { display: none; }
+@media (pointer: coarse) { .touch-only { display: inline-block; } }
+
+/* ---- phones and small tablets: viewport on top, series strip and scrubber
+   below, side panel as a bottom sheet, larger touch targets */
 @media (max-width: 860px) {
-  #app { grid-template-columns: 1fr; grid-template-rows: 48px 1fr auto; }
-  #rail { display: none; }
-  #side { display: none; }
-  body.mobile-side #side { display: flex; grid-row: 3; max-height: 45vh; border-left: 0; border-top: 1px solid var(--line); }
-  body.mobile-rail #rail { display: flex; grid-row: 3; max-height: 45vh; border-right: 0; border-top: 1px solid var(--line); }
-  #studyline { display: none; }
+  #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto auto; height: 100dvh; }
+  #topbar { grid-column: 1; flex-wrap: wrap; height: auto; padding: 6px 8px; gap: 6px; }
+  #topbar .spacer { flex: 1; }
+  #topbar > button { padding: 8px 10px; }
+  #brand { margin-right: 0; }
+  #brand span, #studyline, #btn-open-folder, #btn-smooth, #btn-overlay, #topbar .long { display: none; }
+  #toolbar { flex-basis: 100%; order: 10; gap: 4px; }
+  #toolbar button { flex: 1 1 0; padding: 8px 2px; font-size: 13px; min-height: 38px; }
+  .mobile-only { display: inline-block; }
+  #stage { grid-row: 2; min-height: 0; }
+  #rail { grid-row: 3; border-right: 0; border-top: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
+  #rail-head { display: none; }
+  #series-list { flex-direction: row; padding: 6px 8px; gap: 6px; }
+  .series { flex: 0 0 auto; width: 172px; grid-template-columns: 48px 1fr; padding: 4px; }
+  .series canvas { width: 48px; height: 48px; }
+  .series .t { font-size: 11.5px; }
+  .series .t .err { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #scrub { grid-row: 4; padding: 6px 10px calc(6px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+  #scrub button { min-width: 40px; min-height: 40px; }
+  #fps { display: none; }
+  #slice-label { min-width: 0; font-size: 11px; }
+  #side {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; max-height: 80vh; z-index: 5;
+    border-left: 0; border-top: 1px solid var(--line-strong); border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 30px rgba(0,0,0,.55); transform: translateY(105%); transition: transform .25s ease;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  body.sheet-open #side { transform: none; }
+  #sheet-head { position: sticky; top: 0; z-index: 1; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #side button { min-height: 36px; }
+  .corner { font-size: 10px; margin: 6px; }
+  #dropzone .box { padding: 18px 16px; }
+  #dropzone h2 { font-size: 17px; }
+  #dropzone p { font-size: 13px; }
+  #toast { bottom: 140px; }
+}
+@media (max-width: 400px) {
+  #toolbar button { font-size: 12px; }
+  .corner.br { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -227,19 +268,20 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 <div id="app">
   <header id="topbar">
     <div id="brand"><b>Lightbox</b><span>DICOM viewer</span></div>
-    <button id="btn-open" class="primary">Open zip or files</button>
+    <button id="btn-open" class="primary">Open<span class="long"> zip or files</span></button>
     <button id="btn-open-folder" title="Open a folder of DICOM files">Folder</button>
-    <button id="btn-sample" title="Load the bundled synthetic MRI phantom">Sample study</button>
+    <button id="btn-sample" title="Load the bundled synthetic MRI phantom">Sample<span class="long"> study</span></button>
     <span id="studyline"></span>
     <span class="spacer"></span>
+    <button id="btn-panels" class="mobile-only" title="Window/level, sharing and tags">Info<span class="long"> &amp; share</span></button>
     <div id="toolbar">
       <button id="btn-fit" title="Fit image to window (F)">Fit</button>
       <button id="btn-invert" title="Invert grey scale (I)">Invert</button>
+      <button id="btn-wlmode" class="touch-only" title="One-finger drag adjusts window/level instead of scrolling slices">W/L</button>
       <button id="btn-ruler" title="Measure distance in mm (M)">Ruler</button>
       <button id="btn-overlay" class="active" title="Show or hide overlay text (O)">Overlay</button>
       <button id="btn-smooth" class="active" title="Toggle smooth or pixel-exact interpolation">Smooth</button>
-      <button id="btn-panels" title="Show or hide side panels on small screens">Panels</button>
-      <button id="btn-help" title="Keyboard and mouse help (?)">?</button>
+      <button id="btn-help" title="Keyboard, mouse and touch help (?)">?</button>
     </div>
     <input type="file" id="file-input" multiple accept=".zip,.dcm,.dicom,.ima,application/zip,application/dicom,*/*" hidden>
     <input type="file" id="folder-input" webkitdirectory multiple hidden>
@@ -285,6 +327,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
   </main>
 
   <aside id="side">
+    <div id="sheet-head" class="mobile-only"><span class="label">Info &amp; share</span><button id="btn-sheet-close">Close</button></div>
     <section>
       <h3>Window / level</h3>
       <div class="wl">
@@ -293,6 +336,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
       </div>
       <div class="row">
         <select id="preset" aria-label="Window preset">
+          <option value="custom">Preset: custom</option>
           <option value="dicom">Preset: from DICOM header</option>
           <option value="auto">Preset: auto (percentiles)</option>
           <option value="full">Preset: full range</option>
@@ -303,7 +347,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
         </select>
         <button id="btn-reset-wl" title="Reset window/level (R)">Reset</button>
       </div>
-      <p class="note">Drag on the image: left–right changes width, up–down changes centre. Wheel scrolls slices, Ctrl+wheel zooms.</p>
+      <p class="note">Drag on the image (mouse, or a finger in W/L mode): left–right changes width, up–down changes centre.</p>
     </section>
 
     <section>
@@ -359,7 +403,16 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 
 <div class="help" id="help">
   <div class="card">
-    <h2>Keyboard and mouse</h2>
+    <h2>Controls</h2>
+    <h3>Touch</h3>
+    <table>
+      <tr><td>swipe up / down</td><td>previous / next slice</td></tr>
+      <tr><td>pinch</td><td>zoom; two fingers drag to pan</td></tr>
+      <tr><td>W/L button, then drag</td><td>window (left–right) and level (up–down)</td></tr>
+      <tr><td>double tap</td><td>fit to window</td></tr>
+      <tr><td>Info &amp; share</td><td>window presets, contact sheet, tags</td></tr>
+    </table>
+    <h3>Keyboard and mouse</h3>
     <table>
       <tr><td>wheel, ↑ ↓ ← →</td><td>previous / next slice</td></tr>
       <tr><td>PgUp PgDn</td><td>jump 10 slices</td></tr>
@@ -1248,7 +1301,7 @@ function resetStudy() { study.series = []; study.files = 0; study.skipped = []; 
 // ------------------------------------------------------------ rendering
 const view = {
   series: null, index: 0, ww: 1, wc: 0, invert: false, zoom: 1, pan: { x: 0, y: 0 }, fit: true, smooth: true, overlay: true,
-  rulerMode: false, ruler: null, frame: null, probe: null, off: document.createElement('canvas'), offCtx: null,
+  rulerMode: false, wlMode: false, ruler: null, frame: null, probe: null, off: document.createElement('canvas'), offCtx: null,
 };
 view.offCtx = view.off.getContext('2d', { willReadFrequently: true });
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
@@ -1274,6 +1327,7 @@ function fullRangeWindow(frame, inst) {
 async function selectSeries(i) {
   const s = study.series[i]; if (!s) return;
   view.series = s; view.index = Math.floor(s.count / 2); view.ruler = null; stopCine();
+  document.body.classList.remove('sheet-open');
   document.querySelectorAll('.series').forEach((el, k) => el.classList.toggle('active', k === i));
   const el = document.querySelectorAll('.series')[i]; if (el) el.scrollIntoView({ block: 'nearest' });
   $('slider').max = s.count - 1; $('slider').value = view.index;
@@ -1392,7 +1446,7 @@ function updateOverlay() {
   const fr = inst.frames > 1 ? `frame ${frame + 1}/${inst.frames}  ` : '';
   $('ov-tr').textContent = [`${fr}Im ${view.index + 1}/${s.count}`, posTxt, `${inst.cols}×${inst.rows}  ${sp}`, s.thickness != null ? `thk ${fmt(s.thickness)} mm` : ''].filter(Boolean).join('\n');
   const probe = view.probe ? `(${view.probe.x}, ${view.probe.y}) = ${view.probe.v}` : '';
-  $('ov-bl').textContent = [s.isColor ? 'colour image' : `W ${fmt(view.ww)}  L ${fmt(view.wc)}${view.invert ? '  inverted' : ''}`, probe, view.rulerMode ? 'ruler: drag to measure' : ''].filter(Boolean).join('\n');
+  $('ov-bl').textContent = [s.isColor ? 'colour image' : `W ${fmt(view.ww)}  L ${fmt(view.wc)}${view.invert ? '  inverted' : ''}`, probe, view.rulerMode ? 'ruler: drag to measure' : (view.wlMode ? 'W/L: drag to adjust' : '')].filter(Boolean).join('\n');
   const te = ds.str(T.EchoTime), tr = ds.str(T.RepetitionTime); const seq = [ds.str(T.SequenceName), te && `TE ${fmt(+te)}`, tr && `TR ${fmt(+tr)}`].filter(Boolean).join(' ');
   $('ov-br').textContent = [`zoom ${(view.zoom * 100).toFixed(0)}%`, seq, TS_NAMES[inst.ts] || ''].filter(Boolean).join('\n');
 }
@@ -1612,9 +1666,27 @@ function applyWL(c, w) { view.wc = c; view.ww = Math.max(1e-3, w); syncWL(); if 
 function resetWL() { const s = view.series; if (!s) return; const w = s.defaultWindow || { c: 128, w: 256 }; applyWL(w.c, w.w); $('preset').value = s.instances[0].window ? 'dicom' : 'auto'; }
 
 let drag = null;
+// Touch: one finger scrubs slices (or adjusts window/level in W/L mode, or
+// draws the ruler), two fingers pinch-zoom and pan. Mouse: drag = W/L,
+// shift/right/middle drag = pan.
+const touches = new Map();
+let pinch = null;
+const touchCentroid = () => { const pts = [...touches.values()]; const a = pts[0], b = pts[1]; return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) }; };
 viewport.addEventListener('pointerdown', (e) => {
   if (!view.series) return; viewport.focus(); viewport.setPointerCapture(e.pointerId);
   const rect = viewport.getBoundingClientRect(); const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if (e.pointerType === 'touch') {
+    touches.set(e.pointerId, { x, y });
+    if (touches.size >= 2) { // second finger: switch to pinch/pan, cancel the one-finger gesture
+      if (drag && drag.mode === 'ruler') view.ruler = null;
+      drag = null; const c = touchCentroid(); pinch = { ...c, zoom: view.zoom, px: view.pan.x, py: view.pan.y }; draw();
+      e.preventDefault(); return;
+    }
+    const mode = view.rulerMode ? 'ruler' : (view.wlMode ? 'wl' : 'scrub');
+    drag = { mode, x, y, sx: x, sy: y, wc: view.wc, ww: view.ww, px: view.pan.x, py: view.pan.y, moved: false, index: view.index, touch: true };
+    if (mode === 'ruler') { const g = geometry(); const p = screenToImg(x, y, g); view.ruler = { p1: p, p2: p }; draw(); }
+    e.preventDefault(); return;
+  }
   const mode = view.rulerMode && e.button === 0 && !e.shiftKey ? 'ruler' : (e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey ? 'wl' : 'pan');
   drag = { mode, x, y, sx: x, sy: y, wc: view.wc, ww: view.ww, px: view.pan.x, py: view.pan.y, moved: false };
   if (mode === 'ruler') { const g = geometry(); const p = screenToImg(x, y, g); view.ruler = { p1: p, p2: p }; draw(); }
@@ -1623,6 +1695,18 @@ viewport.addEventListener('pointerdown', (e) => {
 viewport.addEventListener('pointermove', (e) => {
   const rect = viewport.getBoundingClientRect(); const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const g = geometry();
+  if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+    touches.set(e.pointerId, { x, y });
+    if (touches.size >= 2 && pinch) {
+      const c = touchCentroid();
+      view.zoom = clamp(pinch.zoom * c.d / Math.max(pinch.d, 1), 0.1, 40);
+      // keep the point under the initial centroid fixed, then add the centroid's travel
+      const gz = geometry(); const before = screenToImg(pinch.cx, pinch.cy, { ...gz, scale: gz.scale / view.zoom * pinch.zoom, x0: gz.W / 2 - gz.iw * (gz.scale / view.zoom * pinch.zoom) / 2 + pinch.px, y0: gz.H / 2 - gz.ih * (gz.scale / view.zoom * pinch.zoom) / 2 + pinch.py });
+      view.pan.x = pinch.px; view.pan.y = pinch.py; const after = imgToScreen(before, geometry());
+      view.pan.x += pinch.cx - after.x + (c.cx - pinch.cx); view.pan.y += pinch.cy - after.y + (c.cy - pinch.cy);
+      view.fit = false; draw(); updateOverlay(); return;
+    }
+  }
   if (!drag) {
     if (g && view.frame && view.frame.gray) { // pixel probe
       const p = screenToImg(x, y, g); const ix = Math.floor(p.x), iy = Math.floor(p.y);
@@ -1633,6 +1717,12 @@ viewport.addEventListener('pointermove', (e) => {
     return;
   }
   const dx = x - drag.x, dy = y - drag.y; drag.moved = drag.moved || Math.hypot(x - drag.sx, y - drag.sy) > 2;
+  if (drag.mode === 'scrub') {
+    const per = clamp(viewport.clientHeight / Math.max(view.series.count, 1), 5, 24); // px of travel per slice
+    const target = clamp(drag.index + Math.round((y - drag.sy) / per), 0, view.series.count - 1);
+    if (target !== view.index) showFrame(target);
+    return;
+  }
   if (drag.mode === 'wl') {
     const full = view.series.fullWindow || { w: 256 }; const k = full.w / 400; // whole drag across ~400px spans the data range
     applyWL(drag.wc + dy * k, drag.ww + dx * k); $('preset').value = 'custom';
@@ -1640,7 +1730,11 @@ viewport.addEventListener('pointermove', (e) => {
   else if (drag.mode === 'ruler' && g) { view.ruler.p2 = screenToImg(x, y, g); draw(); }
   drag.x = x; drag.y = y;
 });
-const endDrag = (e) => { if (drag && drag.mode === 'ruler' && !drag.moved) view.ruler = null; drag = null; draw(); };
+const endDrag = (e) => {
+  if (e.pointerType === 'touch') { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; if (touches.size) return; }
+  if (drag && drag.mode === 'ruler' && !drag.moved) view.ruler = null;
+  drag = null; draw();
+};
 viewport.addEventListener('pointerup', endDrag); viewport.addEventListener('pointercancel', endDrag);
 viewport.addEventListener('pointerleave', () => { view.probe = null; updateOverlay(); });
 viewport.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1650,17 +1744,6 @@ viewport.addEventListener('wheel', (e) => {
   else step(e.deltaY > 0 ? 1 : -1);
 }, { passive: false });
 viewport.addEventListener('dblclick', fit);
-
-// touch: pinch to zoom handled through pointer events count
-const touches = new Map();
-viewport.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
-viewport.addEventListener('pointermove', (e) => {
-  if (e.pointerType !== 'touch' || !touches.has(e.pointerId)) return;
-  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (touches.size === 2) { drag = null; const [a, b] = [...touches.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (view.pinch) setZoom(view.zoom * d / view.pinch); view.pinch = d; }
-});
-const touchEnd = (e) => { touches.delete(e.pointerId); if (touches.size < 2) view.pinch = null; };
-viewport.addEventListener('pointerup', touchEnd); viewport.addEventListener('pointercancel', touchEnd);
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, select, textarea')) return;
@@ -1699,7 +1782,9 @@ $('btn-invert').addEventListener('click', () => { view.invert = !view.invert; $(
 $('btn-overlay').addEventListener('click', () => { view.overlay = !view.overlay; $('btn-overlay').classList.toggle('active', view.overlay); updateOverlay(); });
 $('btn-smooth').addEventListener('click', () => { view.smooth = !view.smooth; $('btn-smooth').classList.toggle('active', view.smooth); draw(); });
 $('btn-ruler').addEventListener('click', () => { view.rulerMode = !view.rulerMode; $('btn-ruler').classList.toggle('active', view.rulerMode); viewport.classList.toggle('ruler', view.rulerMode); if (!view.rulerMode) view.ruler = null; draw(); updateOverlay(); });
-$('btn-panels').addEventListener('click', () => { const b = document.body; if (b.classList.contains('mobile-side')) { b.classList.remove('mobile-side'); b.classList.add('mobile-rail'); } else if (b.classList.contains('mobile-rail')) b.classList.remove('mobile-rail'); else b.classList.add('mobile-side'); draw(); });
+$('btn-panels').addEventListener('click', () => document.body.classList.toggle('sheet-open'));
+$('btn-sheet-close').addEventListener('click', () => document.body.classList.remove('sheet-open'));
+$('btn-wlmode').addEventListener('click', () => { view.wlMode = !view.wlMode; $('btn-wlmode').classList.toggle('active', view.wlMode); updateOverlay(); });
 $('btn-help').addEventListener('click', () => $('help').classList.add('show')); $('btn-help-close').addEventListener('click', () => $('help').classList.remove('show'));
 $('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').classList.remove('show'); });
 $('privacy').addEventListener('change', () => { updateOverlay(); updateTags(); });

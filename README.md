@@ -45,6 +45,11 @@ Mouse and keys: wheel = next slice, drag = window/level, Shift-drag or right-dra
 Ctrl-wheel = zoom, arrows, PgUp/PgDn, Home/End, `[` `]` = series, `F` fit, `R` reset,
 `I` invert, `O` overlay, Space = cine, `?` = help.
 
+On a phone or tablet the series list becomes a strip under the image and the
+side panel a bottom sheet (**Info & share**). Swipe up or down to move through
+slices, pinch to zoom, drag with two fingers to pan, double-tap to fit, and
+press **W/L** to make a one-finger drag adjust the window instead.
+
 ### Supported encodings
 
 | Transfer syntax | In the browser | With `dicom_export.py` |
@@ -129,6 +134,7 @@ python tools/make_test_data.py sample/synthetic_mri.zip  # rebuild the sample st
 python tests/make_expected.py tests/fixtures             # pydicom corpus + expected hashes
 npm install playwright && npx playwright install chromium
 node tests/browser_test.mjs --screens shots/             # 75 checks, screenshots optional
+node tests/mobile_test.mjs --screens shots/              # phone layout and touch gestures
 ```
 
 The browser tests load the synthetic study and pydicom's bundled sample files
