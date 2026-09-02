@@ -117,6 +117,15 @@ const packOk = await page.evaluate(async (b64) => {
 }, fs.readFileSync(packPath).toString('base64'));
 ok(packOk.hasSummary && packOk.montages === 8, `AI pack has summary.md and 8 montages (${packOk.n} files)`);
 
+// one contact sheet per series, as separate downloads
+const sheetNames = [];
+page.on('download', d => sheetNames.push(d.suggestedFilename()));
+await page.click('#btn-sheets-all');
+await page.waitForFunction(() => document.getElementById('btn-sheets-all').textContent.startsWith('Save a sheet'), null, { timeout: 60000 });
+await page.waitForTimeout(500);
+const sheetPngs = sheetNames.filter(n => n.endsWith('_sheet.png'));
+ok(sheetPngs.length === 8 && sheetPngs[0] === '01_T1_AX_explicit_LE_sheet.png', `one sheet per series saved (${sheetPngs.length}: ${sheetPngs.slice(0, 2).join(', ')} …)`);
+
 // keyboard and mouse interaction
 await page.focus('#viewport');
 const before = await page.evaluate(() => Lightbox.view.index);

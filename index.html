@@ -352,7 +352,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 
     <section>
       <h3>Share with an AI</h3>
-      <p class="note" style="margin:0 0 8px">Claude and ChatGPT read ordinary images, not DICOM. Export a labelled contact sheet of this series, then paste the image and the study summary into the chat.</p>
+      <p class="note" style="margin:0 0 8px">Claude and ChatGPT read ordinary images, not DICOM. Make a labelled contact sheet of this series, or one for every series in the study, then drop the images and the study summary into the chat.</p>
       <div class="row">
         <label for="sheet-n">Tiles</label>
         <select id="sheet-n"><option value="9">9</option><option value="16" selected>16</option><option value="25">25</option><option value="36">36</option><option value="0">all</option></select>
@@ -374,8 +374,11 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
         <button id="btn-copy-summary">Copy study summary</button>
       </div>
       <div class="btns" style="margin-top:10px;align-items:center">
-        <button id="btn-pack" title="Zip of summary.md plus a contact sheet and slices for every series">Download AI pack (zip)</button>
-        <label class="chk" for="pack-every" style="white-space:nowrap">every <input type="number" id="pack-every" value="2" min="1" max="50" style="width:4em" title="Include every Nth slice in the pack"> slices</label>
+        <button id="btn-sheets-all" class="primary" title="One labelled contact sheet per series, saved as separate PNG files">Save a sheet for every series</button>
+        <button id="btn-pack" title="One zip: summary.md plus a contact sheet for every series">…as one zip</button>
+      </div>
+      <div class="row">
+        <label class="chk" for="pack-slices"><input type="checkbox" id="pack-slices"> also put single slices in the zip, every <input type="number" id="pack-every" value="4" min="1" max="50" style="width:4em" title="Include every Nth slice in the zip"> slices</label>
       </div>
       <p class="note">For Claude Code or ChatGPT's code interpreter, the repository's <span class="mono">tools/dicom_export.py</span> produces the same pack from the original zip.</p>
     </section>
@@ -1610,9 +1613,33 @@ async function makeSheet() {
   } catch (e) { toast(e.message, true); }
   $('btn-sheet').disabled = false;
 }
+// Sheet options shared by the single-series button and the whole-study exports.
+function sheetOptions(s) {
+  const tiles = +$('sheet-n').value; const o = { tiles: tiles || Math.min(s.count, 64), tile: +$('sheet-size').value, privacy: priv() };
+  if (s === view.series) { o.wc = view.wc; o.ww = view.ww; o.invert = view.invert; } // keep the window you chose for the series on screen
+  return o;
+}
+const sheetName = (s, si) => `${String(si + 1).padStart(2, '0')}_${safeName(s.description)}_sheet.png`;
+
+// One PNG per series, saved one after another (browsers ask once to allow several downloads).
+async function saveAllSheets() {
+  if (!study.series.length) return toast('Load a study first', true);
+  const btn = $('btn-sheets-all'); btn.disabled = true; let n = 0;
+  try {
+    for (let si = 0; si < study.series.length; si++) {
+      const s = study.series[si]; btn.textContent = `Sheet ${si + 1} of ${study.series.length}…`;
+      let sheet; try { sheet = await renderContactSheet(s, sheetOptions(s)); } catch (e) { continue; }
+      await download(await canvasBlob(sheet), sheetName(s, si)); n++;
+      setProgress((si + 1) / study.series.length); await nextFrame();
+    }
+    toast(`${n} contact sheet${n === 1 ? '' : 's'} saved. Drag them into the chat with the study summary.`);
+  } catch (e) { toast(e.message, true); }
+  setProgress(null); btn.disabled = false; btn.textContent = 'Save a sheet for every series';
+}
+
 async function makePack() {
   if (!study.series.length) return toast('Load a study first', true);
-  const every = Math.max(1, +$('pack-every').value || 1); const files = []; const enc = new TextEncoder();
+  const withSlices = $('pack-slices').checked; const every = Math.max(1, +$('pack-every').value || 1); const files = []; const enc = new TextEncoder();
   const btn = $('btn-pack'); btn.disabled = true; btn.textContent = 'Building…';
   try {
     const summary = [studySummary()];
@@ -1620,11 +1647,12 @@ async function makePack() {
     for (let si = 0; si < study.series.length; si++) {
       const s = study.series[si]; const dir = `series_${String(si + 1).padStart(2, '0')}_${safeName(s.description)}`;
       let sheet;
-      try { sheet = await renderContactSheet(s, { tiles: 36, tile: 256, privacy: priv() }); } catch (e) { summary.push(`\nSeries ${si + 1}: could not render (${e.message})`); continue; }
+      try { sheet = await renderContactSheet(s, sheetOptions(s)); } catch (e) { summary.push(`\nSeries ${si + 1}: could not render (${e.message})`); continue; }
       files.push({ name: `${dir}/montage.png`, data: new Uint8Array(await (await canvasBlob(sheet)).arrayBuffer()) });
       summary.push(`\n## Series ${si + 1}: ${s.description}\n- montage: ${dir}/montage.png`);
+      setProgress((si + 1) / study.series.length); await nextFrame();
       const w = s.defaultWindow || { c: 128, w: 256 }; let written = 0;
-      for (let i = 0; i < s.count; i += every) {
+      for (let i = 0; withSlices && i < s.count; i += every) {
         let f; try { f = await s.frame(i); } catch (e) { continue; }
         const inst = s.instanceAt(i).inst; paintFrame(f, inst, off, octx, w.c, w.w, false);
         let out = off;
@@ -1632,13 +1660,13 @@ async function makePack() {
         files.push({ name: `${dir}/slice_${String(i + 1).padStart(3, '0')}.png`, data: new Uint8Array(await (await canvasBlob(out)).arrayBuffer()) });
         written++; if (written % 5 === 0) { setProgress((si + i / s.count) / study.series.length); await nextFrame(); }
       }
-      summary.push(`- slices: ${written} PNGs (every ${every} of ${s.count}), window ${fmt(w.w)}/${fmt(w.c)}`);
+      if (withSlices) summary.push(`- slices: ${written} PNGs (every ${every} of ${s.count}), window ${fmt(w.w)}/${fmt(w.c)}`);
     }
     files.unshift({ name: 'summary.md', data: enc.encode(summary.join('\n') + '\n') });
     download(buildZip(files), `lightbox_pack_${safeName(study.ds.str(T.StudyDescription) || 'study')}.zip`);
-    toast(`AI pack: ${files.length} files`);
+    toast(`Zip with ${files.length} files saved`);
   } catch (e) { toast(e.message, true); }
-  setProgress(null); btn.disabled = false; btn.textContent = 'Download AI pack (zip)';
+  setProgress(null); btn.disabled = false; btn.textContent = '…as one zip';
 }
 
 // ------------------------------------------------------------ interaction
@@ -1797,6 +1825,7 @@ $('btn-sheet-dl').addEventListener('click', () => download(lastSheet, `${safeNam
 $('btn-copy-slice').addEventListener('click', async () => { if (!view.frame) return; try { await copyBlob(await canvasBlob(sliceCanvas())); toast('Slice copied'); } catch (e) { toast(e.message, true); } });
 $('btn-dl-slice').addEventListener('click', async () => { if (!view.frame) return; download(await canvasBlob(sliceCanvas()), `${safeName(view.series.description)}_${String(view.index + 1).padStart(3, '0')}.png`); });
 $('btn-pack').addEventListener('click', makePack);
+$('btn-sheets-all').addEventListener('click', saveAllSheets);
 function sliceCanvas() { // current slice at native resolution with aspect correction
   const s = view.series; const c = document.createElement('canvas'); c.width = view.off.width; c.height = Math.round(view.off.height * s.aspect);
   const cx = c.getContext('2d'); cx.imageSmoothingEnabled = true; cx.drawImage(view.off, 0, 0, c.width, c.height); return c;

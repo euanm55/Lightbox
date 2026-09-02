@@ -87,9 +87,11 @@ In the **Share with an AI** panel:
 4. Paste both into the chat and ask your question. For a specific slice,
    **Copy this slice** gives a full-resolution PNG.
 
-**Download AI pack (zip)** produces `summary.md` plus a montage and every Nth
-slice for every series. Upload the zip to a chat that can open files
-(Claude with file analysis, ChatGPT with code interpreter).
+**Whole study at once:** **Save a sheet for every series** writes one
+labelled contact-sheet PNG per series (a 300 MB study becomes ten or twenty
+images of a few hundred KB each). Drag them into the chat together with the
+study summary. **…as one zip** bundles the same sheets with `summary.md`; tick
+the box to add individual slices too, for chats that can open zips.
 
 Patient name, ID and birth date are left out of everything unless you untick
 the privacy box.
