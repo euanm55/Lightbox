@@ -18,9 +18,11 @@ that runs in your browser tab.
 
 ## 1. Viewing your scans
 
-**Online:** enable GitHub Pages once (repository *Settings → Pages → Source: GitHub Actions*)
-and the `Deploy viewer to GitHub Pages` workflow publishes the viewer at
-`https://<your-user>.github.io/<repo>/`.
+**Online:** https://euanm55.github.io/Lightbox/ — GitHub Pages serving the
+`main` branch (*Settings → Pages → Source: Deploy from a branch, main, / root*).
+No build step is needed because the viewer is a single file. A manual
+`Deploy viewer to GitHub Pages` workflow is included for anyone who prefers the
+"GitHub Actions" source; it publishes only `index.html` and the sample study.
 
 **Offline:** download `index.html` and double-click it. Everything except the
 "Sample study" button works from a plain file. (The sample needs to be fetched,

@@ -1,9 +1,9 @@
-# Publishes the viewer to GitHub Pages.
-# One-time setup: repository Settings -> Pages -> Source: "GitHub Actions".
+# Optional: publishes only index.html and the sample study to GitHub Pages.
+# Needs repository Settings -> Pages -> Source: "GitHub Actions"; run it from
+# the Actions tab. With Source: "Deploy from a branch" (main, root folder)
+# GitHub publishes the repository itself and this workflow is not needed.
 name: Deploy viewer to GitHub Pages
 on:
-  push:
-    branches: [main, master, claude/dicom-image-viewer-1u7dh0]
   workflow_dispatch:
 permissions:
   contents: read
