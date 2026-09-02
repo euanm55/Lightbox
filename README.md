@@ -28,8 +28,11 @@ publishes the branch itself and the workflow skips its deploy step.
 "Sample study" button works from a plain file. (The sample needs to be fetched,
 so serve the folder with `python -m http.server` if you want it.)
 
-Then drop your zip onto the page. You can also drop a folder, choose loose
-`.dcm` files, or a zip that contains zips. The viewer:
+Then drop your zip onto the page. An already unzipped study works too: drop
+the folder, or use **Choose a folder** (every file in every subfolder is
+tried, and non-DICOM files are skipped). Loose `.dcm` files and zips that
+contain zips are fine as well. iPhones have no folder picker, so there you
+select the files inside the folder instead. The viewer:
 
 - groups images into series (and splits a series that mixes orientations, as localizers do),
 - orders slices by their position in the scanner, not by file name,

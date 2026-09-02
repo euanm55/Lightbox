@@ -302,9 +302,10 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
       <div id="dropzone">
         <div class="box">
           <h2>Drop a zip of DICOM files here</h2>
-          <p>MRI, CT, X-ray, ultrasound. A whole study exported from a hospital portal or CD works as-is, folders and all. Everything stays in this browser tab; nothing is uploaded anywhere.</p>
+          <p>MRI, CT, X-ray, ultrasound. A whole study exported from a hospital portal or CD works as-is, zipped or as a folder, subfolders and all. Everything stays in this browser tab; nothing is uploaded anywhere. (iPhones have no folder picker: open the folder in Files, Select All, and choose the files.)</p>
           <div class="actions">
             <button class="primary" id="btn-open-2">Choose zip or files</button>
+            <button id="btn-open-folder-2" title="An already unzipped study: every DICOM file in the folder and its subfolders is read">Choose a folder</button>
             <button id="btn-sample-2">Try the sample study</button>
           </div>
           <p style="font-size:12px;margin-top:14px">Then scroll through slices, set window/level, and use <b>Share with an AI</b> on the right to export a contact sheet Claude or ChatGPT can read.</p>
@@ -1900,7 +1901,7 @@ function sliceCanvas() { // current slice at native resolution with aspect corre
 
 // file opening
 $('btn-open').addEventListener('click', () => $('file-input').click()); $('btn-open-2').addEventListener('click', () => $('file-input').click());
-$('btn-open-folder').addEventListener('click', () => $('folder-input').click());
+$('btn-open-folder').addEventListener('click', () => $('folder-input').click()); $('btn-open-folder-2').addEventListener('click', () => $('folder-input').click());
 $('file-input').addEventListener('change', (e) => { if (e.target.files.length) loadFiles([...e.target.files]); e.target.value = ''; });
 $('folder-input').addEventListener('change', (e) => { if (e.target.files.length) loadFiles([...e.target.files].map(f => Object.assign(f, { name: f.webkitRelativePath || f.name }))); e.target.value = ''; });
 for (const ev of ['dragenter', 'dragover']) document.addEventListener(ev, (e) => { e.preventDefault(); $('dropzone').classList.add('over'); $('dropzone').classList.remove('hidden'); });
