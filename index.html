@@ -85,7 +85,7 @@ input[type=checkbox] { accent-color: var(--accent); }
   height: 100%;
 }
 #topbar {
-  grid-column: 1 / -1;
+  grid-column: 1 / -1; min-width: 0;
   display: flex; align-items: center; gap: 12px;
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
@@ -221,7 +221,7 @@ dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans)
 /* ---- phones and small tablets: viewport on top, series strip and scrubber
    below, side panel as a bottom sheet, larger touch targets */
 @media (max-width: 860px) {
-  #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto auto; height: 100dvh; }
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto auto; height: 100dvh; }
   #topbar { grid-column: 1; flex-wrap: wrap; height: auto; padding: 6px 8px; gap: 6px; }
   #topbar .spacer { flex: 1; }
   #topbar > button { padding: 8px 10px; }

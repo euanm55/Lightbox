@@ -1,9 +1,11 @@
-# Optional: publishes only index.html and the sample study to GitHub Pages.
-# Needs repository Settings -> Pages -> Source: "GitHub Actions"; run it from
-# the Actions tab. With Source: "Deploy from a branch" (main, root folder)
-# GitHub publishes the repository itself and this workflow is not needed.
+# Publishes index.html and the sample study to GitHub Pages on every push to
+# main when repository Settings -> Pages -> Source is "GitHub Actions".
+# With Source: "Deploy from a branch" GitHub publishes the branch itself; the
+# configure step then fails harmlessly and the deploy is skipped.
 name: Deploy viewer to GitHub Pages
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,15 +22,22 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - id: cfg
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+      - if: steps.cfg.outcome != 'success'
+        run: echo "Pages is not set to the GitHub Actions source; nothing to deploy from here."
       - name: Assemble site (viewer + sample study only)
+        if: steps.cfg.outcome == 'success'
         run: |
           mkdir -p site/sample
           cp index.html site/
           cp sample/synthetic_mri.zip site/sample/
           touch site/.nojekyll
-      - uses: actions/upload-pages-artifact@v3
+      - if: steps.cfg.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - id: deployment
+        if: steps.cfg.outcome == 'success'
         uses: actions/deploy-pages@v4
