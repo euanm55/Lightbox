@@ -28,6 +28,15 @@ prefer `--anonymize` if a summary might be quoted anywhere.
 
 Be plain that image impressions are a viewing aid, not a diagnosis.
 
+## Landing changes (standing instruction from the owner)
+
+Always take a change all the way without being asked: run the tests, commit,
+push the working branch, then land it on `main` (fast-forward `main` when it
+is a clean descendant, otherwise open a pull request into `main` and merge
+it). GitHub Pages serves `main`, so nothing is finished until `main` has it.
+Push credentials in web sessions may be bound to the repository's old name
+`euanm55/ADP-SARs`; that URL still works because GitHub redirects it.
+
 ## Working on the code
 
 - `index.html` is dependency-free on purpose (no CDN, works offline and on
