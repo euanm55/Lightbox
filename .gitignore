@@ -1,0 +1,10 @@
+# generated test fixtures (rebuild with: python tests/make_expected.py tests/fixtures)
+tests/fixtures/
+dicom_out/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+# never commit real scans
+*.dcm
+!sample/synthetic_mri.zip

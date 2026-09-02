@@ -1,0 +1,35 @@
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python dependencies (with optional decoders)
+        run: pip install -r tools/requirements.txt pyjpegls
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null
+          npm install playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Build sample study and fixtures
+        run: |
+          python tools/make_test_data.py sample/synthetic_mri.zip
+          python tests/make_expected.py tests/fixtures
+      - name: Python export tool
+        run: |
+          python tools/dicom_export.py sample/synthetic_mri.zip -o out_syn --anonymize
+          test -f out_syn/summary.md
+          test "$(ls -d out_syn/series_* | wc -l)" -eq 8
+          python tools/dicom_export.py tests/fixtures/corpus.zip -o out_corpus --no-slices
+          python tools/dicom_export.py sample/synthetic_mri.zip --list | head -5
+      - name: Browser tests
+        run: node tests/browser_test.mjs

@@ -1,0 +1,8 @@
+pydicom>=3.0
+numpy
+pillow>=10.1
+# optional decoders for JPEG / JPEG 2000 / JPEG-LS compressed studies
+pylibjpeg
+pylibjpeg-libjpeg
+pylibjpeg-openjpeg
+pylibjpeg-rle

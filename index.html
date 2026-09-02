@@ -1,0 +1,1746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lightbox DICOM Viewer</title>
+<meta name="description" content="Open a zip of DICOM images (MRI, CT, X-ray) in the browser, scroll through series, adjust window/level, and export contact sheets that Claude or ChatGPT can read.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Lightbox commits to one visual world: a darkened reading room. Grey-scale
+   images are only legible on a near-black ground, so there is no light theme. */
+:root {
+  --ground: #0b0e12;
+  --panel: #151a21;
+  --panel-2: #1b212a;
+  --line: #262d37;
+  --line-strong: #3a4452;
+  --text: #e6e9ee;
+  --muted: #8a94a3;
+  --dim: #5b6572;
+  --accent: #58c4b0;
+  --accent-ink: #0b0e12;
+  --annot: #f5c451;
+  --warn: #e8a33d;
+  --bad: #e5646b;
+  --good: #6cc98a;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --rail: 232px;
+  --side: 320px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--text);
+  font: 14px/1.45 var(--sans);
+  overflow: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+button {
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: var(--text);
+}
+button:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+button.active { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+select {
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+input[type=number] {
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 4px 6px;
+  width: 6.5em;
+  font-family: var(--mono);
+}
+input[type=range] { accent-color: var(--accent); }
+input[type=checkbox] { accent-color: var(--accent); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.label {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: var(--rail) 1fr var(--side);
+  grid-template-rows: 48px 1fr;
+  height: 100%;
+}
+#topbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+#brand { display: flex; align-items: baseline; gap: 8px; margin-right: 8px; }
+#brand b { font-weight: 600; font-size: 16px; letter-spacing: .01em; }
+#brand span { color: var(--muted); font-size: 12px; }
+#topbar .spacer { flex: 1; }
+#studyline { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+#toolbar { display: flex; gap: 6px; align-items: center; }
+#toolbar button { padding: 4px 9px; font-size: 13px; }
+kbd {
+  font: 11px var(--mono); color: var(--muted);
+  border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; margin-left: 4px;
+}
+
+/* ---- left rail: series list */
+#rail {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+#rail-head { padding: 10px 12px 6px; display: flex; justify-content: space-between; align-items: baseline; }
+#series-list { list-style: none; margin: 0; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+.series {
+  display: grid; grid-template-columns: 64px 1fr; gap: 8px; align-items: center;
+  padding: 6px; border-radius: 4px; border: 1px solid transparent; cursor: pointer;
+}
+.series:hover { background: var(--panel-2); }
+.series.active { border-color: var(--accent); background: var(--panel-2); }
+.series canvas { width: 64px; height: 64px; background: #000; border-radius: 2px; image-rendering: auto; }
+.series .t { font-size: 12.5px; line-height: 1.3; overflow: hidden; }
+.series .t b { font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.series .t small { color: var(--muted); font-family: var(--mono); font-size: 11px; display: block; }
+.series .t .err { color: var(--bad); font-size: 11px; }
+
+/* ---- centre: viewport */
+#stage { position: relative; display: flex; flex-direction: column; min-width: 0; background: #000; }
+#viewport { position: relative; flex: 1; min-height: 0; cursor: crosshair; }
+#viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#viewport.pan { cursor: grab; }
+#viewport.ruler { cursor: cell; }
+.corner {
+  position: absolute; margin: 10px; pointer-events: none;
+  font: 12px/1.35 var(--mono); color: var(--annot);
+  text-shadow: 0 0 3px #000, 0 0 2px #000; white-space: pre;
+}
+.corner.tl { top: 0; left: 0; }
+.corner.tr { top: 0; right: 0; text-align: right; }
+.corner.bl { bottom: 0; left: 0; }
+.corner.br { bottom: 0; right: 0; text-align: right; }
+#dropzone {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+  color: var(--muted); padding: 24px;
+}
+#dropzone .box {
+  max-width: 460px; border: 1px dashed var(--line-strong); border-radius: 8px; padding: 28px 32px; background: rgba(21,26,33,.7);
+}
+#dropzone h2 { margin: 0 0 6px; font-size: 20px; font-weight: 500; color: var(--text); text-wrap: balance; }
+#dropzone p { margin: 6px 0; }
+#dropzone .actions { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+#dropzone.over .box { border-color: var(--accent); background: rgba(88,196,176,.08); }
+#dropzone.hidden { display: none; }
+#progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: transparent;
+}
+#progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+
+#scrub {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  padding: 8px 14px; border-top: 1px solid var(--line); background: var(--panel);
+}
+#scrub input[type=range] { width: 100%; }
+#slice-label { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 9em; text-align: right; }
+#cine { display: flex; align-items: center; gap: 6px; }
+
+/* ---- right side: tags and export */
+#side {
+  border-left: 1px solid var(--line); background: var(--panel);
+  overflow-y: auto; display: flex; flex-direction: column;
+}
+#side section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+#side h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.row label { color: var(--muted); font-size: 12px; }
+.wl { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 8px; align-items: center; font-size: 12px; }
+.wl input[type=range] { width: 100%; }
+.wl output { font-family: var(--mono); min-width: 5.5em; text-align: right; }
+dl.tags { margin: 0; display: grid; grid-template-columns: minmax(8em, auto) 1fr; gap: 3px 10px; font-size: 12px; }
+dl.tags dt { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+dl.tags dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+dl.tags dd.hid { color: var(--dim); font-style: italic; font-family: var(--sans); }
+#alltags { max-height: 40vh; overflow: auto; font: 11px/1.4 var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 6px; margin-top: 8px; white-space: pre; display: none; }
+#alltags.show { display: block; }
+.note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.note.warn { color: var(--warn); }
+#sheet-preview { margin-top: 8px; display: none; }
+#sheet-preview img { width: 100%; border: 1px solid var(--line); border-radius: 4px; display: block; }
+#sheet-preview .cap { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+
+#toast {
+  position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%);
+  background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 6px;
+  padding: 8px 14px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 70vw;
+}
+#toast.show { opacity: 1; }
+#toast.bad { border-color: var(--bad); }
+
+.help {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10;
+}
+.help.show { display: flex; }
+.help .card { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; padding: 20px 24px; max-width: 560px; width: calc(100% - 40px); max-height: 85vh; overflow: auto; }
+.help h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+.help table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.help td { padding: 3px 6px 3px 0; vertical-align: top; }
+.help td:first-child { white-space: nowrap; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.help p { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 1100px) {
+  :root { --side: 280px; --rail: 200px; }
+}
+@media (max-width: 860px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 48px 1fr auto; }
+  #rail { display: none; }
+  #side { display: none; }
+  body.mobile-side #side { display: flex; grid-row: 3; max-height: 45vh; border-left: 0; border-top: 1px solid var(--line); }
+  body.mobile-rail #rail { display: flex; grid-row: 3; max-height: 45vh; border-right: 0; border-top: 1px solid var(--line); }
+  #studyline { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div id="brand"><b>Lightbox</b><span>DICOM viewer</span></div>
+    <button id="btn-open" class="primary">Open zip or files</button>
+    <button id="btn-open-folder" title="Open a folder of DICOM files">Folder</button>
+    <button id="btn-sample" title="Load the bundled synthetic MRI phantom">Sample study</button>
+    <span id="studyline"></span>
+    <span class="spacer"></span>
+    <div id="toolbar">
+      <button id="btn-fit" title="Fit image to window (F)">Fit</button>
+      <button id="btn-invert" title="Invert grey scale (I)">Invert</button>
+      <button id="btn-ruler" title="Measure distance in mm (M)">Ruler</button>
+      <button id="btn-overlay" class="active" title="Show or hide overlay text (O)">Overlay</button>
+      <button id="btn-smooth" class="active" title="Toggle smooth or pixel-exact interpolation">Smooth</button>
+      <button id="btn-panels" title="Show or hide side panels on small screens">Panels</button>
+      <button id="btn-help" title="Keyboard and mouse help (?)">?</button>
+    </div>
+    <input type="file" id="file-input" multiple accept=".zip,.dcm,.dicom,.ima,application/zip,application/dicom,*/*" hidden>
+    <input type="file" id="folder-input" webkitdirectory multiple hidden>
+  </header>
+
+  <aside id="rail">
+    <div id="rail-head"><span class="label">Series</span><span id="series-count" class="mono" style="font-size:11px;color:var(--muted)"></span></div>
+    <ul id="series-list"></ul>
+  </aside>
+
+  <main id="stage">
+    <div id="viewport" tabindex="0" aria-label="Image viewport">
+      <canvas id="canvas"></canvas>
+      <div class="corner tl" id="ov-tl"></div>
+      <div class="corner tr" id="ov-tr"></div>
+      <div class="corner bl" id="ov-bl"></div>
+      <div class="corner br" id="ov-br"></div>
+      <div id="dropzone">
+        <div class="box">
+          <h2>Drop a zip of DICOM files here</h2>
+          <p>MRI, CT, X-ray, ultrasound. A whole study exported from a hospital portal or CD works as-is, folders and all. Everything stays in this browser tab; nothing is uploaded anywhere.</p>
+          <div class="actions">
+            <button class="primary" id="btn-open-2">Choose zip or files</button>
+            <button id="btn-sample-2">Try the sample study</button>
+          </div>
+          <p style="font-size:12px;margin-top:14px">Then scroll through slices, set window/level, and use <b>Share with an AI</b> on the right to export a contact sheet Claude or ChatGPT can read.</p>
+        </div>
+      </div>
+      <div id="progress"><i></i></div>
+    </div>
+    <div id="scrub">
+      <div id="cine">
+        <button id="btn-prev" title="Previous slice">◀</button>
+        <button id="btn-play" title="Play / pause (Space)">▶</button>
+        <button id="btn-next" title="Next slice">▶|</button>
+        <select id="fps" title="Playback speed">
+          <option value="4">4 fps</option><option value="8">8 fps</option><option value="12" selected>12 fps</option><option value="24">24 fps</option>
+        </select>
+      </div>
+      <input type="range" id="slider" min="0" max="0" value="0" step="1" aria-label="Slice">
+      <span id="slice-label">—</span>
+    </div>
+  </main>
+
+  <aside id="side">
+    <section>
+      <h3>Window / level</h3>
+      <div class="wl">
+        <label for="ww">Width</label><input type="range" id="ww" min="1" max="4096" value="4096"><output id="ww-out">—</output>
+        <label for="wc">Centre</label><input type="range" id="wc" min="0" max="4096" value="2048"><output id="wc-out">—</output>
+      </div>
+      <div class="row">
+        <select id="preset" aria-label="Window preset">
+          <option value="dicom">Preset: from DICOM header</option>
+          <option value="auto">Preset: auto (percentiles)</option>
+          <option value="full">Preset: full range</option>
+          <option value="ct-brain">CT brain (80 / 40)</option>
+          <option value="ct-soft">CT soft tissue (400 / 40)</option>
+          <option value="ct-bone">CT bone (2000 / 500)</option>
+          <option value="ct-lung">CT lung (1500 / −600)</option>
+        </select>
+        <button id="btn-reset-wl" title="Reset window/level (R)">Reset</button>
+      </div>
+      <p class="note">Drag on the image: left–right changes width, up–down changes centre. Wheel scrolls slices, Ctrl+wheel zooms.</p>
+    </section>
+
+    <section>
+      <h3>Share with an AI</h3>
+      <p class="note" style="margin:0 0 8px">Claude and ChatGPT read ordinary images, not DICOM. Export a labelled contact sheet of this series, then paste the image and the study summary into the chat.</p>
+      <div class="row">
+        <label for="sheet-n">Tiles</label>
+        <select id="sheet-n"><option value="9">9</option><option value="16" selected>16</option><option value="25">25</option><option value="36">36</option><option value="0">all</option></select>
+        <label for="sheet-size">Tile px</label>
+        <select id="sheet-size"><option value="192">192</option><option value="256" selected>256</option><option value="384">384</option><option value="512">512</option></select>
+      </div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="privacy" checked> Hide patient name, ID and date of birth</label>
+      </div>
+      <div class="btns">
+        <button id="btn-sheet" class="primary">Make contact sheet</button>
+        <button id="btn-sheet-copy" disabled>Copy sheet</button>
+        <button id="btn-sheet-dl" disabled>Download sheet</button>
+      </div>
+      <div id="sheet-preview"><img alt="Contact sheet preview" id="sheet-img"><div class="cap" id="sheet-cap"></div></div>
+      <div class="btns" style="margin-top:10px">
+        <button id="btn-copy-slice">Copy this slice</button>
+        <button id="btn-dl-slice">Download slice PNG</button>
+        <button id="btn-copy-summary">Copy study summary</button>
+      </div>
+      <div class="btns" style="margin-top:10px;align-items:center">
+        <button id="btn-pack" title="Zip of summary.md plus a contact sheet and slices for every series">Download AI pack (zip)</button>
+        <label class="chk" for="pack-every" style="white-space:nowrap">every <input type="number" id="pack-every" value="2" min="1" max="50" style="width:4em" title="Include every Nth slice in the pack"> slices</label>
+      </div>
+      <p class="note">For Claude Code or ChatGPT's code interpreter, the repository's <span class="mono">tools/dicom_export.py</span> produces the same pack from the original zip.</p>
+    </section>
+
+    <section>
+      <h3>Image</h3>
+      <dl class="tags" id="tags-image"></dl>
+    </section>
+    <section>
+      <h3>Study</h3>
+      <dl class="tags" id="tags-study"></dl>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-alltags">All tags</button>
+        <button id="btn-copy-tags" title="Copy all tags of this image as text">Copy tags</button>
+      </div>
+      <pre id="alltags"></pre>
+    </section>
+    <section>
+      <p class="note">Viewing aid only, not a medical device. Interpretation of scans is for your clinicians.</p>
+    </section>
+  </aside>
+</div>
+
+<div id="toast" role="status"></div>
+
+<div class="help" id="help">
+  <div class="card">
+    <h2>Keyboard and mouse</h2>
+    <table>
+      <tr><td>wheel, ↑ ↓ ← →</td><td>previous / next slice</td></tr>
+      <tr><td>PgUp PgDn</td><td>jump 10 slices</td></tr>
+      <tr><td>Home End</td><td>first / last slice</td></tr>
+      <tr><td>[ ]</td><td>previous / next series</td></tr>
+      <tr><td>drag</td><td>window / level</td></tr>
+      <tr><td>Shift+drag, right-drag, middle-drag</td><td>pan</td></tr>
+      <tr><td>Ctrl+wheel, + −</td><td>zoom</td></tr>
+      <tr><td>F</td><td>fit to window</td></tr>
+      <tr><td>R</td><td>reset window / level</td></tr>
+      <tr><td>I</td><td>invert</td></tr>
+      <tr><td>M, then drag</td><td>measure distance in mm (Esc clears)</td></tr>
+      <tr><td>O</td><td>toggle overlay text</td></tr>
+      <tr><td>Space</td><td>play / pause cine</td></tr>
+      <tr><td>?</td><td>this help</td></tr>
+    </table>
+    <p>Supported encodings: uncompressed (little and big endian), deflated, RLE lossless, JPEG baseline and JPEG lossless. JPEG 2000 and JPEG-LS need the Python tool in the repository (or a Safari browser for JPEG 2000).</p>
+    <div class="btns"><button id="btn-help-close" class="primary">Close</button></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   Lightbox — a self-contained DICOM viewer. No libraries, no uploads.
+   Sections: utilities · zip reader · DICOM parser · pixel decoders ·
+   study model · rendering · interaction · export · boot.
+   ===================================================================== */
+
+// ------------------------------------------------------------ utilities
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fmt = (v, d = 1) => (v == null || Number.isNaN(v)) ? '—' : (Math.abs(v) >= 1000 ? Math.round(v).toString() : Number(v).toFixed(d).replace(/\.0+$/, ''));
+let toastTimer = null;
+function toast(msg, bad = false) {
+  const t = $('toast'); t.textContent = msg; t.classList.toggle('bad', bad); t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), bad ? 6000 : 2600);
+}
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+function setProgress(f) { $('progress').firstElementChild.style.width = (f == null ? 0 : Math.round(f * 100)) + '%'; }
+
+// ------------------------------------------------------------ zip reader
+// Minimal ZIP reader: central directory (with zip64), stored and deflated
+// entries. Deflate uses the browser's DecompressionStream.
+async function inflateRaw(bytes) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot decompress zip entries (no DecompressionStream). Use a current Chrome, Edge, Firefox or Safari.');
+  const run = async (b) => {
+    const ds = new DecompressionStream('deflate-raw');
+    const w = ds.writable.getWriter(); w.write(b).catch(() => {}); w.close().catch(() => {});
+    return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+  };
+  // Deflated DICOM files are often padded to an even length with a trailing
+  // zero byte, which strict decoders reject as junk after the stream.
+  let end = bytes.length, lastErr = null;
+  for (let attempt = 0; attempt < 3 && end > 0; attempt++) {
+    try { return await run(bytes.subarray(0, end)); }
+    catch (e) { lastErr = e; if (bytes[end - 1] !== 0) break; end--; }
+  }
+  // Strict native decoders also reject trailing junk after the stream; the pure-JS inflate below does not care.
+  try { return inflateRawJS(bytes); } catch (e) { lastErr = e; }
+  throw new Error('deflate stream could not be decoded' + (lastErr && lastErr.message && lastErr.message !== 'Failed to fetch' ? ` (${lastErr.message})` : ''));
+}
+// Small RFC 1951 inflate (after Mark Adler's puff). Used only when the native decoder refuses a stream.
+function inflateRawJS(src) {
+  let pos = 0, bitBuf = 0, bitCnt = 0, o = 0;
+  let buf = new Uint8Array(Math.max(4096, src.length * 4));
+  const ensure = (n) => { if (o + n > buf.length) { const nb = new Uint8Array(Math.max(buf.length * 2, o + n)); nb.set(buf.subarray(0, o)); buf = nb; } };
+  const bits = (n) => { while (bitCnt < n) { if (pos >= src.length) throw new Error('unexpected end of deflate data'); bitBuf |= src[pos++] << bitCnt; bitCnt += 8; } const v = bitBuf & ((1 << n) - 1); bitBuf >>>= n; bitCnt -= n; return v; };
+  const build = (lengths) => { const count = new Uint16Array(16), offs = new Uint16Array(16), symbol = new Uint16Array(lengths.length); for (const l of lengths) count[l]++; count[0] = 0; for (let i = 1; i < 16; i++) offs[i] = offs[i - 1] + count[i - 1]; for (let s = 0; s < lengths.length; s++) if (lengths[s]) symbol[offs[lengths[s]]++] = s; return { count, symbol }; };
+  const decode = (h) => { let code = 0, first = 0, index = 0; for (let len = 1; len < 16; len++) { code |= bits(1); const c = h.count[len]; if (code - c < first) return h.symbol[index + (code - first)]; index += c; first += c; first <<= 1; code <<= 1; } throw new Error('bad Huffman code'); };
+  const LBASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258], LEXT = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  const DBASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577], DEXT = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  let fixedL = null, fixedD = null;
+  for (;;) {
+    const final = bits(1), type = bits(2);
+    if (type === 0) {
+      bitBuf = 0; bitCnt = 0; const len = src[pos] | (src[pos + 1] << 8); pos += 4; ensure(len); buf.set(src.subarray(pos, pos + len), o); o += len; pos += len;
+    } else {
+      let lit, dist;
+      if (type === 1) {
+        if (!fixedL) { const l = new Uint8Array(288); l.fill(8, 0, 144); l.fill(9, 144, 256); l.fill(7, 256, 280); l.fill(8, 280, 288); fixedL = build(l); fixedD = build(new Uint8Array(30).fill(5)); }
+        lit = fixedL; dist = fixedD;
+      } else if (type === 2) {
+        const hlit = bits(5) + 257, hdist = bits(5) + 1, hclen = bits(4) + 4; const ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+        const cl = new Uint8Array(19); for (let i = 0; i < hclen; i++) cl[ORDER[i]] = bits(3);
+        const ch = build(cl); const lens = new Uint8Array(hlit + hdist);
+        for (let i = 0; i < hlit + hdist;) { const sym = decode(ch); if (sym < 16) lens[i++] = sym; else { let rep, val = 0; if (sym === 16) { val = lens[i - 1]; rep = 3 + bits(2); } else if (sym === 17) rep = 3 + bits(3); else rep = 11 + bits(7); while (rep-- > 0) lens[i++] = val; } }
+        lit = build(lens.subarray(0, hlit)); dist = build(lens.subarray(hlit));
+      } else throw new Error('bad deflate block type');
+      for (;;) {
+        const sym = decode(lit);
+        if (sym < 256) { ensure(1); buf[o++] = sym; }
+        else if (sym === 256) break;
+        else { const si = sym - 257; const len = LBASE[si] + bits(LEXT[si]); const di = decode(dist); const d = DBASE[di] + bits(DEXT[di]); if (d > o) throw new Error('bad distance'); ensure(len); for (let k = 0; k < len; k++) { buf[o] = buf[o - d]; o++; } }
+      }
+    }
+    if (final) break;
+  }
+  return buf.slice(0, o);
+}
+async function readZip(buffer) {
+  const u8 = new Uint8Array(buffer), dv = new DataView(buffer);
+  const n = u8.length;
+  let eocd = -1;
+  for (let i = n - 22; i >= Math.max(0, n - 65558); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a zip file (no end-of-central-directory record).');
+  let count = dv.getUint16(eocd + 10, true);
+  let cdOff = dv.getUint32(eocd + 16, true);
+  if (count === 0xFFFF || cdOff === 0xFFFFFFFF) {
+    const loc = eocd - 20;
+    if (loc >= 0 && dv.getUint32(loc, true) === 0x07064b50) {
+      const z64 = Number(dv.getBigUint64(loc + 8, true));
+      count = Number(dv.getBigUint64(z64 + 32, true));
+      cdOff = Number(dv.getBigUint64(z64 + 48, true));
+    }
+  }
+  const entries = [];
+  let p = cdOff;
+  for (let i = 0; i < count && p + 46 <= n; i++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true);
+    let csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+    const nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true), commentLen = dv.getUint16(p + 32, true);
+    let off = dv.getUint32(p + 42, true);
+    const name = new TextDecoder('utf-8').decode(u8.subarray(p + 46, p + 46 + nameLen));
+    // zip64 extra field
+    let q = p + 46 + nameLen; const qEnd = q + extraLen;
+    while (q + 4 <= qEnd) {
+      const id = dv.getUint16(q, true), sz = dv.getUint16(q + 2, true);
+      if (id === 0x0001) {
+        let r = q + 4;
+        if (usize === 0xFFFFFFFF) { usize = Number(dv.getBigUint64(r, true)); r += 8; }
+        if (csize === 0xFFFFFFFF) { csize = Number(dv.getBigUint64(r, true)); r += 8; }
+        if (off === 0xFFFFFFFF) { off = Number(dv.getBigUint64(r, true)); r += 8; }
+      }
+      q += 4 + sz;
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+    if (name.endsWith('/') || usize === 0) continue;
+    entries.push({ name, method, csize, usize, off });
+  }
+  const readEntry = async (e) => {
+    if (dv.getUint32(e.off, true) !== 0x04034b50) throw new Error('bad local header for ' + e.name);
+    const nl = dv.getUint16(e.off + 26, true), el = dv.getUint16(e.off + 28, true);
+    const start = e.off + 30 + nl + el;
+    const raw = u8.subarray(start, start + e.csize);
+    if (e.method === 0) return raw.slice();
+    if (e.method === 8) return inflateRaw(raw);
+    throw new Error(`unsupported zip compression method ${e.method} for ${e.name}`);
+  };
+  return { entries, readEntry };
+}
+
+// ------------------------------------------------------------ zip writer (stored)
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[i] = c >>> 0; } return t; })();
+function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function buildZip(files) { // files: [{name, data:Uint8Array}]
+  const enc = new TextEncoder(); const parts = []; const central = []; let offset = 0;
+  const now = new Date(); const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  for (const f of files) {
+    const name = enc.encode(f.name); const crc = crc32(f.data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, f.data.length, true); lh.setUint32(22, f.data.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, f.data.length, true); ch.setUint32(24, f.data.length, true); ch.setUint16(28, name.length, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + f.data.length;
+  }
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true); eocd.setUint16(8, files.length, true); eocd.setUint16(10, files.length, true);
+  eocd.setUint32(12, cdSize, true); eocd.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(eocd.buffer)], { type: 'application/zip' });
+}
+
+// ------------------------------------------------------------ DICOM dictionary
+// tag -> [VR, keyword]. Enough for implicit-VR files and readable tag panels.
+const DICT = {
+  0x00020010: ['UI', 'TransferSyntaxUID'], 0x00020002: ['UI', 'MediaStorageSOPClassUID'], 0x00020003: ['UI', 'MediaStorageSOPInstanceUID'],
+  0x00080005: ['CS', 'SpecificCharacterSet'], 0x00080008: ['CS', 'ImageType'], 0x00080016: ['UI', 'SOPClassUID'], 0x00080018: ['UI', 'SOPInstanceUID'],
+  0x00080020: ['DA', 'StudyDate'], 0x00080021: ['DA', 'SeriesDate'], 0x00080022: ['DA', 'AcquisitionDate'], 0x00080023: ['DA', 'ContentDate'],
+  0x00080030: ['TM', 'StudyTime'], 0x00080031: ['TM', 'SeriesTime'], 0x00080032: ['TM', 'AcquisitionTime'], 0x00080050: ['SH', 'AccessionNumber'],
+  0x00080060: ['CS', 'Modality'], 0x00080064: ['CS', 'ConversionType'], 0x00080070: ['LO', 'Manufacturer'], 0x00080080: ['LO', 'InstitutionName'],
+  0x00080090: ['PN', 'ReferringPhysicianName'], 0x00081010: ['SH', 'StationName'], 0x00081030: ['LO', 'StudyDescription'], 0x0008103E: ['LO', 'SeriesDescription'],
+  0x00081090: ['LO', 'ManufacturerModelName'],
+  0x00100010: ['PN', 'PatientName'], 0x00100020: ['LO', 'PatientID'], 0x00100030: ['DA', 'PatientBirthDate'], 0x00100040: ['CS', 'PatientSex'],
+  0x00101010: ['AS', 'PatientAge'], 0x00101020: ['DS', 'PatientSize'], 0x00101030: ['DS', 'PatientWeight'],
+  0x00180010: ['LO', 'ContrastBolusAgent'], 0x00180015: ['CS', 'BodyPartExamined'], 0x00180020: ['CS', 'ScanningSequence'], 0x00180021: ['CS', 'SequenceVariant'],
+  0x00180022: ['CS', 'ScanOptions'], 0x00180023: ['CS', 'MRAcquisitionType'], 0x00180024: ['SH', 'SequenceName'], 0x00180050: ['DS', 'SliceThickness'],
+  0x00180060: ['DS', 'KVP'], 0x00180080: ['DS', 'RepetitionTime'], 0x00180081: ['DS', 'EchoTime'], 0x00180082: ['DS', 'InversionTime'],
+  0x00180083: ['DS', 'NumberOfAverages'], 0x00180084: ['DS', 'ImagingFrequency'], 0x00180087: ['DS', 'MagneticFieldStrength'], 0x00180088: ['DS', 'SpacingBetweenSlices'],
+  0x00180091: ['IS', 'EchoTrainLength'], 0x00180095: ['DS', 'PixelBandwidth'], 0x00181000: ['LO', 'DeviceSerialNumber'], 0x00181020: ['LO', 'SoftwareVersions'],
+  0x00181030: ['LO', 'ProtocolName'], 0x00181150: ['IS', 'ExposureTime'], 0x00181151: ['IS', 'XRayTubeCurrent'], 0x00181152: ['IS', 'Exposure'],
+  0x00181210: ['SH', 'ConvolutionKernel'], 0x00181250: ['SH', 'ReceiveCoilName'], 0x00181310: ['US', 'AcquisitionMatrix'], 0x00181314: ['DS', 'FlipAngle'],
+  0x00185100: ['CS', 'PatientPosition'],
+  0x0020000D: ['UI', 'StudyInstanceUID'], 0x0020000E: ['UI', 'SeriesInstanceUID'], 0x00200010: ['SH', 'StudyID'], 0x00200011: ['IS', 'SeriesNumber'],
+  0x00200012: ['IS', 'AcquisitionNumber'], 0x00200013: ['IS', 'InstanceNumber'], 0x00200020: ['CS', 'PatientOrientation'], 0x00200032: ['DS', 'ImagePositionPatient'],
+  0x00200037: ['DS', 'ImageOrientationPatient'], 0x00200052: ['UI', 'FrameOfReferenceUID'], 0x00200060: ['CS', 'Laterality'], 0x00201002: ['IS', 'ImagesInAcquisition'],
+  0x00201041: ['DS', 'SliceLocation'], 0x00204000: ['LT', 'ImageComments'],
+  0x00280002: ['US', 'SamplesPerPixel'], 0x00280004: ['CS', 'PhotometricInterpretation'], 0x00280006: ['US', 'PlanarConfiguration'], 0x00280008: ['IS', 'NumberOfFrames'],
+  0x00280010: ['US', 'Rows'], 0x00280011: ['US', 'Columns'], 0x00280030: ['DS', 'PixelSpacing'], 0x00280034: ['IS', 'PixelAspectRatio'],
+  0x00280100: ['US', 'BitsAllocated'], 0x00280101: ['US', 'BitsStored'], 0x00280102: ['US', 'HighBit'], 0x00280103: ['US', 'PixelRepresentation'],
+  0x00280120: ['US', 'PixelPaddingValue'], 0x00280301: ['CS', 'BurnedInAnnotation'], 0x00281050: ['DS', 'WindowCenter'], 0x00281051: ['DS', 'WindowWidth'],
+  0x00281052: ['DS', 'RescaleIntercept'], 0x00281053: ['DS', 'RescaleSlope'], 0x00281054: ['LO', 'RescaleType'], 0x00281055: ['LO', 'WindowCenterWidthExplanation'],
+  0x00281101: ['US', 'RedPaletteColorLookupTableDescriptor'], 0x00281102: ['US', 'GreenPaletteColorLookupTableDescriptor'], 0x00281103: ['US', 'BluePaletteColorLookupTableDescriptor'],
+  0x00281201: ['OW', 'RedPaletteColorLookupTableData'], 0x00281202: ['OW', 'GreenPaletteColorLookupTableData'], 0x00281203: ['OW', 'BluePaletteColorLookupTableData'],
+  0x00282110: ['CS', 'LossyImageCompression'], 0x00282112: ['DS', 'LossyImageCompressionRatio'],
+  0x00289110: ['SQ', 'PixelMeasuresSequence'], 0x00289132: ['SQ', 'FrameVOILUTSequence'], 0x00289145: ['SQ', 'PixelValueTransformationSequence'],
+  0x00209113: ['SQ', 'PlanePositionSequence'], 0x00209116: ['SQ', 'PlaneOrientationSequence'],
+  0x52009229: ['SQ', 'SharedFunctionalGroupsSequence'], 0x52009230: ['SQ', 'PerFrameFunctionalGroupsSequence'],
+  0x7FE00010: ['OW', 'PixelData'],
+};
+const T = Object.fromEntries(Object.entries(DICT).map(([k, v]) => [v[1], Number(k)]));
+const VR32 = new Set(['OB', 'OW', 'OF', 'OD', 'OL', 'OV', 'SQ', 'UT', 'UN', 'UC', 'UR', 'SV', 'UV']);
+const STRING_VRS = new Set(['AE', 'AS', 'CS', 'DA', 'DS', 'DT', 'IS', 'LO', 'LT', 'PN', 'SH', 'ST', 'TM', 'UI', 'UT', 'UC', 'UR']);
+const TS = {
+  IMPLICIT_LE: '1.2.840.10008.1.2', EXPLICIT_LE: '1.2.840.10008.1.2.1', DEFLATED_LE: '1.2.840.10008.1.2.1.99', EXPLICIT_BE: '1.2.840.10008.1.2.2',
+  RLE: '1.2.840.10008.1.2.5', JPEG_BASELINE: '1.2.840.10008.1.2.4.50', JPEG_EXTENDED: '1.2.840.10008.1.2.4.51',
+  JPEG_LOSSLESS: '1.2.840.10008.1.2.4.57', JPEG_LOSSLESS_SV1: '1.2.840.10008.1.2.4.70',
+  JPEG_LS: '1.2.840.10008.1.2.4.80', JPEG_LS_NEAR: '1.2.840.10008.1.2.4.81',
+  J2K_LOSSLESS: '1.2.840.10008.1.2.4.90', J2K: '1.2.840.10008.1.2.4.91',
+  HTJ2K_LOSSLESS: '1.2.840.10008.1.2.4.201', HTJ2K_RPCL: '1.2.840.10008.1.2.4.202', HTJ2K: '1.2.840.10008.1.2.4.203',
+};
+const TS_NAMES = {
+  [TS.IMPLICIT_LE]: 'Implicit VR little endian', [TS.EXPLICIT_LE]: 'Explicit VR little endian', [TS.DEFLATED_LE]: 'Deflated explicit VR little endian',
+  [TS.EXPLICIT_BE]: 'Explicit VR big endian', [TS.RLE]: 'RLE lossless', [TS.JPEG_BASELINE]: 'JPEG baseline (8-bit)', [TS.JPEG_EXTENDED]: 'JPEG extended (12-bit)',
+  [TS.JPEG_LOSSLESS]: 'JPEG lossless', [TS.JPEG_LOSSLESS_SV1]: 'JPEG lossless SV1', [TS.JPEG_LS]: 'JPEG-LS lossless', [TS.JPEG_LS_NEAR]: 'JPEG-LS near-lossless',
+  [TS.J2K_LOSSLESS]: 'JPEG 2000 lossless', [TS.J2K]: 'JPEG 2000', [TS.HTJ2K_LOSSLESS]: 'HTJ2K lossless', [TS.HTJ2K_RPCL]: 'HTJ2K', [TS.HTJ2K]: 'HTJ2K',
+};
+const tagStr = (t) => `(${(t >>> 16).toString(16).padStart(4, '0')},${(t & 0xFFFF).toString(16).padStart(4, '0')})`.toUpperCase();
+
+// ------------------------------------------------------------ DICOM parser
+class DataSet {
+  constructor(buffer, littleEndian) { this.buf = buffer; this.u8 = new Uint8Array(buffer); this.dv = new DataView(buffer); this.le = littleEndian; this.el = new Map(); this.charset = 'latin1'; }
+  has(tag) { return this.el.has(tag); }
+  get(tag) { return this.el.get(tag); }
+  raw(tag) { const e = this.el.get(tag); return e && e.off != null ? this.u8.subarray(e.off, e.off + e.len) : null; }
+  str(tag) {
+    const e = this.el.get(tag); if (!e || e.off == null) return null;
+    const bytes = this.u8.subarray(e.off, e.off + e.len);
+    let s;
+    try { s = new TextDecoder(this.charset).decode(bytes); } catch (_) { s = new TextDecoder('latin1').decode(bytes); }
+    return s.replace(/[\0\s]+$/g, '').replace(/^\s+/, '');
+  }
+  strs(tag) { const s = this.str(tag); return s == null ? [] : s.split('\\').map(x => x.trim()); }
+  num(tag) {
+    const e = this.el.get(tag); if (!e || e.off == null || e.len === 0) return null;
+    const vr = e.vr;
+    if (vr === 'US') return this.dv.getUint16(e.off, this.le);
+    if (vr === 'SS') return this.dv.getInt16(e.off, this.le);
+    if (vr === 'UL') return this.dv.getUint32(e.off, this.le);
+    if (vr === 'SL') return this.dv.getInt32(e.off, this.le);
+    if (vr === 'FL') return this.dv.getFloat32(e.off, this.le);
+    if (vr === 'FD') return this.dv.getFloat64(e.off, this.le);
+    const v = parseFloat(this.strs(tag)[0]); return Number.isNaN(v) ? null : v;
+  }
+  nums(tag) {
+    const e = this.el.get(tag); if (!e || e.off == null) return [];
+    const vr = e.vr; const out = [];
+    const step = { US: 2, SS: 2, UL: 4, SL: 4, FL: 4, FD: 8 }[vr];
+    if (step) { for (let p = e.off; p + step <= e.off + e.len; p += step) out.push(this.num1(vr, p)); return out; }
+    return this.strs(tag).map(parseFloat).filter(v => !Number.isNaN(v));
+  }
+  num1(vr, p) {
+    switch (vr) { case 'US': return this.dv.getUint16(p, this.le); case 'SS': return this.dv.getInt16(p, this.le); case 'UL': return this.dv.getUint32(p, this.le);
+      case 'SL': return this.dv.getInt32(p, this.le); case 'FL': return this.dv.getFloat32(p, this.le); default: return this.dv.getFloat64(p, this.le); }
+  }
+  seq(tag) { const e = this.el.get(tag); return e && e.items ? e.items : []; }
+  // human readable value for tag panels
+  display(tag, max = 80) {
+    const e = this.el.get(tag); if (!e) return '';
+    if (e.items) return `${e.items.length} item(s)`;
+    if (e.fragments) return `${e.fragments.length} fragment(s), encapsulated`;
+    if (STRING_VRS.has(e.vr)) { const s = this.str(tag) || ''; return s.length > max ? s.slice(0, max) + '…' : s; }
+    if (['US', 'SS', 'UL', 'SL', 'FL', 'FD'].includes(e.vr)) { const v = this.nums(tag); return v.length > 16 ? v.slice(0, 16).join(' ') + ' …' : v.join(' '); }
+    if (e.vr === 'AT' && e.len >= 4) return tagStr((this.dv.getUint16(e.off, this.le) << 16 | this.dv.getUint16(e.off + 2, this.le)) >>> 0);
+    return `<${e.len} bytes>`;
+  }
+}
+
+function looksLikeVR(a, b) { return a >= 65 && a <= 90 && b >= 65 && b <= 90; }
+
+// Parse elements from [start, end). Returns end position. Stops after an item
+// delimiter (used for undefined-length items) or at the sequence delimiter.
+function parseElements(ds, start, end, explicit, le, depth = 0) {
+  const dv = ds.dv, u8 = ds.u8;
+  let p = start;
+  while (p + 8 <= end) {
+    const group = dv.getUint16(p, le), elem = dv.getUint16(p + 2, le);
+    const tag = ((group << 16) | elem) >>> 0;
+    if (tag === 0xFFFEE00D) { return p + 8; }            // item delimiter: item ends
+    if (tag === 0xFFFEE0DD) { p += 8; continue; }        // stray sequence delimiter
+    let vr, len, hdr;
+    if (explicit && group !== 0xFFFE) {
+      if (looksLikeVR(u8[p + 4], u8[p + 5])) {
+        vr = String.fromCharCode(u8[p + 4], u8[p + 5]);
+        if (VR32.has(vr)) { len = dv.getUint32(p + 8, le); hdr = 12; } else { len = dv.getUint16(p + 6, le); hdr = 8; }
+      } else { vr = (DICT[tag] || ['UN'])[0]; len = dv.getUint32(p + 4, le); hdr = 8; }
+    } else {
+      vr = (DICT[tag] || ['UN'])[0]; len = dv.getUint32(p + 4, le); hdr = 8;
+      if (tag === 0x7FE00010) vr = 'OW';
+    }
+    p += hdr;
+    if (tag === 0xFFFEE000) { // an item outside a sequence: skip its contents
+      if (len === 0xFFFFFFFF) { p = parseElements(new DataSet(ds.buf, le), p, end, explicit, le, depth + 1); } else p += len;
+      continue;
+    }
+    if (len === 0xFFFFFFFF) {
+      if (tag === 0x7FE00010) {
+        const r = readFragments(ds, p, end, le); ds.el.set(tag, { tag, vr, fragments: r.fragments, encapsulated: true }); p = r.end;
+      } else {
+        const inner = (vr === 'UN' && explicit) ? { explicit: false, le: true } : { explicit, le };
+        const r = readSequence(ds, p, end, true, inner.explicit, inner.le, depth); ds.el.set(tag, { tag, vr: 'SQ', items: r.items }); p = r.end;
+      }
+      continue;
+    }
+    if (p + len > end) { len = Math.max(0, end - p); } // truncated file: keep what we have
+    if (vr === 'SQ') {
+      const r = readSequence(ds, p, p + len, false, explicit, le, depth); ds.el.set(tag, { tag, vr, items: r.items }); p += len;
+    } else if (vr === 'UN' && len > 8 && dv.getUint16(p, true) === 0xFFFE && dv.getUint16(p + 2, true) === 0xE000) {
+      // undefined VR that contains items: treat as an implicit-VR sequence
+      const r = readSequence(ds, p, p + len, false, false, true, depth); ds.el.set(tag, { tag, vr: 'SQ', items: r.items }); p += len;
+    } else {
+      ds.el.set(tag, { tag, vr, off: p, len }); p += len;
+    }
+  }
+  return p;
+}
+function readSequence(ds, p, limit, undefinedLen, explicit, le, depth) {
+  const dv = ds.dv; const items = [];
+  while (p + 8 <= limit) {
+    const tag = ((dv.getUint16(p, le) << 16) | dv.getUint16(p + 2, le)) >>> 0;
+    const len = dv.getUint32(p + 4, le); p += 8;
+    if (tag === 0xFFFEE0DD) break;
+    if (tag !== 0xFFFEE000) { p -= 8; break; }
+    const item = new DataSet(ds.buf, le); item.charset = ds.charset;
+    if (depth < 12) {
+      if (len === 0xFFFFFFFF) p = parseElements(item, p, limit, explicit, le, depth + 1);
+      else { parseElements(item, p, Math.min(limit, p + len), explicit, le, depth + 1); p += len; }
+    } else { p += (len === 0xFFFFFFFF ? 0 : len); }
+    items.push(item);
+  }
+  return { items, end: p };
+}
+function readFragments(ds, p, limit, le) {
+  const dv = ds.dv; const fragments = []; let first = true; let offsets = null;
+  while (p + 8 <= limit) {
+    const tag = ((dv.getUint16(p, le) << 16) | dv.getUint16(p + 2, le)) >>> 0;
+    const len = dv.getUint32(p + 4, le); p += 8;
+    if (tag === 0xFFFEE0DD) break;
+    if (tag !== 0xFFFEE000) break;
+    if (first) { // basic offset table
+      first = false;
+      if (len) { offsets = []; for (let i = 0; i < len; i += 4) offsets.push(dv.getUint32(p + i, true)); }
+    } else fragments.push(ds.u8.subarray(p, p + Math.min(len, limit - p)));
+    p += len;
+  }
+  return { fragments, offsets, end: p };
+}
+
+function charsetFor(cs) {
+  if (!cs) return 'latin1';
+  const c = cs.split('\\').map(s => s.trim()).find(Boolean) || '';
+  if (/192/.test(c)) return 'utf-8';
+  if (/ISO_IR 100|ISO 2022 IR 100/.test(c)) return 'latin1';
+  const m = { 'ISO_IR 101': 'iso-8859-2', 'ISO_IR 109': 'iso-8859-3', 'ISO_IR 110': 'iso-8859-4', 'ISO_IR 144': 'iso-8859-5', 'ISO_IR 127': 'iso-8859-6',
+    'ISO_IR 126': 'iso-8859-7', 'ISO_IR 138': 'iso-8859-8', 'ISO_IR 148': 'iso-8859-9', 'ISO_IR 13': 'shift_jis', 'ISO_IR 166': 'tis-620', 'GB18030': 'gb18030', 'GBK': 'gbk' };
+  return m[c] || 'latin1';
+}
+
+async function parseDicom(buffer) {
+  const u8 = new Uint8Array(buffer), dv = new DataView(buffer);
+  if (u8.length < 132) throw new Error('too small');
+  let p = 0, meta = null, ts = null;
+  const hasPrefix = u8[128] === 0x44 && u8[129] === 0x49 && u8[130] === 0x43 && u8[131] === 0x4D;
+  if (hasPrefix) p = 132;
+  // file meta group (0002,xxxx) is always explicit VR little endian
+  if (dv.getUint16(p, true) === 0x0002) {
+    meta = new DataSet(buffer, true);
+    let q = p;
+    while (q + 8 <= u8.length && dv.getUint16(q, true) === 0x0002) {
+      const tag = ((0x0002 << 16) | dv.getUint16(q + 2, true)) >>> 0;
+      const vr = String.fromCharCode(u8[q + 4], u8[q + 5]);
+      let len, hdr;
+      if (looksLikeVR(u8[q + 4], u8[q + 5])) { if (VR32.has(vr)) { len = dv.getUint32(q + 8, true); hdr = 12; } else { len = dv.getUint16(q + 6, true); hdr = 8; } }
+      else { len = dv.getUint32(q + 4, true); hdr = 8; }
+      meta.el.set(tag, { tag, vr: looksLikeVR(u8[q + 4], u8[q + 5]) ? vr : 'UN', off: q + hdr, len });
+      q += hdr + len;
+    }
+    p = q;
+    ts = meta.str(T.TransferSyntaxUID);
+  } else if (!hasPrefix) {
+    // sniff: is the first tag plausible? (group 0008 / 0010 / 0018 / 0020 / 0028 ...)
+    const g = dv.getUint16(0, true);
+    if (!(g >= 0x0008 && g <= 0x7FE0 && (g & 1) === 0)) throw new Error('not DICOM');
+  }
+  let explicit, le = true;
+  if (ts === TS.EXPLICIT_BE) { explicit = true; le = false; }
+  else if (ts === TS.IMPLICIT_LE) explicit = false;
+  else if (ts) explicit = true;
+  else explicit = looksLikeVR(u8[p + 4], u8[p + 5]);
+  // tolerate a wrong transfer syntax: check the first element's VR bytes
+  if (p + 6 <= u8.length && le) {
+    const vrLooks = looksLikeVR(u8[p + 4], u8[p + 5]);
+    if (explicit && !vrLooks) explicit = false;
+    else if (!explicit && vrLooks && dv.getUint32(p + 4, true) > 0x10000000) explicit = true;
+  }
+  let ds;
+  if (ts === TS.DEFLATED_LE) {
+    const inflated = await inflateRaw(u8.subarray(p));
+    ds = new DataSet(inflated.buffer, true); parseElements(ds, 0, inflated.length, true, true);
+  } else {
+    ds = new DataSet(buffer, le); parseElements(ds, p, u8.length, explicit, le);
+  }
+  ds.charset = charsetFor(ds.str(T.SpecificCharacterSet));
+  ds.transferSyntax = ts || (explicit ? TS.EXPLICIT_LE : TS.IMPLICIT_LE);
+  ds.meta = meta;
+  return ds;
+}
+
+// ------------------------------------------------------------ pixel decoders
+function decodeRLE(frag, rows, cols, spp, bytesPerSample) {
+  const dv = new DataView(frag.buffer, frag.byteOffset, frag.byteLength);
+  const nseg = dv.getUint32(0, true);
+  const offsets = []; for (let i = 0; i < nseg; i++) offsets.push(dv.getUint32(4 + 4 * i, true));
+  const npix = rows * cols; const out = new Uint8Array(npix * spp * bytesPerSample);
+  const tmp = new Uint8Array(npix);
+  for (let seg = 0; seg < nseg; seg++) {
+    let p = offsets[seg]; const end = seg + 1 < nseg ? offsets[seg + 1] : frag.length; let o = 0;
+    tmp.fill(0);
+    while (p < end && o < npix) {
+      const n = (frag[p++] << 24) >> 24;
+      if (n >= 0) { const c = Math.min(n + 1, npix - o, end - p); tmp.set(frag.subarray(p, p + c), o); o += c; p += c; }
+      else if (n !== -128) { const c = Math.min(1 - n, npix - o); tmp.fill(frag[p++], o, o + c); o += c; }
+    }
+    const s = Math.floor(seg / bytesPerSample), b = seg % bytesPerSample; // b=0 is the most significant byte
+    const byteIndex = bytesPerSample - 1 - b;
+    for (let i = 0; i < npix; i++) out[(i * spp + s) * bytesPerSample + byteIndex] = tmp[i];
+  }
+  return out; // little-endian interleaved samples
+}
+
+// JPEG lossless (ITU T.81 process 14, SOF3) — the common "JPEG Lossless SV1"
+// transfer syntax on hospital CDs. Huffman coded, predictors 1-7, restart markers.
+function decodeJpegLossless(bytes) {
+  let p = 0; const n = bytes.length;
+  const be16 = (q) => (bytes[q] << 8) | bytes[q + 1];
+  if (bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw new Error('not a JPEG stream');
+  p = 2; const huff = {}; let frame = null, comps = [], restart = 0, out = null;
+  while (p < n) {
+    if (bytes[p] !== 0xFF) { p++; continue; }
+    const marker = bytes[p + 1]; p += 2;
+    if (marker === 0xFF) { p--; continue; }
+    if (marker === 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker === 0x01 || marker === 0x00) continue;
+    if (marker === 0xD9) break;
+    const len = be16(p), segStart = p + 2, segEnd = p + len;
+    if (marker === 0xC4) {
+      let q = segStart;
+      while (q < segEnd) {
+        const tc = bytes[q] >> 4, th = bytes[q] & 15; q++;
+        const counts = bytes.subarray(q, q + 16); q += 16;
+        let total = 0; for (let i = 0; i < 16; i++) total += counts[i];
+        huff[(tc << 4) | th] = buildHuffman(counts, bytes.subarray(q, q + total)); q += total;
+      }
+    } else if (marker === 0xC3) {
+      const precision = bytes[segStart], height = be16(segStart + 1), width = be16(segStart + 3), nc = bytes[segStart + 5];
+      comps = [];
+      for (let i = 0; i < nc; i++) { const id = bytes[segStart + 6 + i * 3], hv = bytes[segStart + 7 + i * 3]; if ((hv >> 4) !== 1 || (hv & 15) !== 1) throw new Error('subsampled lossless JPEG is not supported'); comps.push({ id }); }
+      frame = { precision, width, height, nc };
+      out = precision > 8 ? new Uint16Array(width * height * nc) : new Uint8Array(width * height * nc);
+    } else if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) {
+      throw new Error('this is a lossy (DCT) JPEG, not lossless');
+    } else if (marker >= 0xC5 && marker <= 0xCF && marker !== 0xC8 && marker !== 0xCC) {
+      throw new Error('hierarchical or arithmetic-coded JPEG is not supported');
+    } else if (marker === 0xDD) {
+      restart = be16(segStart);
+    } else if (marker === 0xDA) {
+      if (!frame) throw new Error('scan before frame header');
+      const ns = bytes[segStart]; const scomps = []; let q = segStart + 1;
+      for (let i = 0; i < ns; i++) {
+        const cs = bytes[q], t = bytes[q + 1]; q += 2;
+        const ci = comps.findIndex(c => c.id === cs);
+        const table = huff[(t >> 4)]; // DC table id
+        if (ci < 0 || !table) throw new Error('bad scan component / Huffman table');
+        scomps.push({ index: ci, table });
+      }
+      const predictor = bytes[q], pt = bytes[q + 2] & 15;
+      p = decodeLosslessScan(bytes, segEnd, frame, scomps, predictor, pt, restart, out);
+      continue;
+    }
+    p = segEnd;
+  }
+  if (!out) throw new Error('no image data in JPEG stream');
+  return { ...frame, data: out };
+}
+function buildHuffman(counts, symbols) {
+  const mincode = new Int32Array(17), maxcode = new Int32Array(17).fill(-1), valptr = new Int32Array(17);
+  let code = 0, k = 0;
+  for (let l = 1; l <= 16; l++) { const c = counts[l - 1]; if (c) { valptr[l] = k; mincode[l] = code; code += c; k += c; maxcode[l] = code - 1; } code <<= 1; }
+  return { mincode, maxcode, valptr, symbols: Array.from(symbols) };
+}
+function decodeLosslessScan(bytes, pos, frame, scomps, predictor, pt, restart, out) {
+  const { width, height, precision, nc } = frame;
+  let p = pos, cur = 0, cnt = 0;
+  const bit = () => {
+    if (cnt === 0) {
+      let b = bytes[p++];
+      if (b === 0xFF) { const nx = bytes[p]; if (nx === 0x00) p++; else { p--; b = 0; } }
+      if (b === undefined) b = 0;
+      cur = b; cnt = 8;
+    }
+    cnt--; return (cur >> cnt) & 1;
+  };
+  const bits = (k) => { let v = 0; for (let i = 0; i < k; i++) v = (v << 1) | bit(); return v; };
+  const decodeSym = (h) => {
+    let code = 0;
+    for (let l = 1; l <= 16; l++) { code = (code << 1) | bit(); if (h.maxcode[l] >= 0 && code <= h.maxcode[l]) return h.symbols[h.valptr[l] + code - h.mincode[l]]; }
+    throw new Error('bad Huffman code');
+  };
+  const diff = (h) => {
+    const s = decodeSym(h);
+    if (s === 0) return 0; if (s === 16) return 32768;
+    const v = bits(s); return v < (1 << (s - 1)) ? v - (1 << s) + 1 : v;
+  };
+  const initial = 1 << (precision - pt - 1);
+  const ns = scomps.length;
+  const mask = 0xFFFF;
+  let mcu = 0, intervalRow = 0, intervalCol = 0;
+  const syncRestart = () => {
+    cnt = 0; // byte align
+    while (p + 1 < bytes.length && !(bytes[p] === 0xFF && bytes[p + 1] >= 0xD0 && bytes[p + 1] <= 0xD7)) p++;
+    if (p + 1 < bytes.length) p += 2;
+  };
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (restart && mcu > 0 && mcu % restart === 0) { syncRestart(); intervalRow = y; intervalCol = x; }
+      for (let c = 0; c < ns; c++) {
+        const sc = scomps[c]; const ci = sc.index; const idx = (y * width + x) * nc + ci;
+        let pred;
+        if (y === intervalRow && x === intervalCol) pred = initial;
+        else if (y === intervalRow) pred = out[idx - nc];
+        else if (x === 0) pred = out[idx - width * nc];
+        else {
+          const ra = out[idx - nc], rb = out[idx - width * nc], rc = out[idx - width * nc - nc];
+          switch (predictor) {
+            case 1: pred = ra; break; case 2: pred = rb; break; case 3: pred = rc; break;
+            case 4: pred = ra + rb - rc; break; case 5: pred = ra + ((rb - rc) >> 1); break;
+            case 6: pred = rb + ((ra - rc) >> 1); break; case 7: pred = (ra + rb) >> 1; break;
+            default: pred = ra;
+          }
+        }
+        out[idx] = ((pred + diff(sc.table)) & mask);
+      }
+      mcu++;
+    }
+  }
+  if (pt) for (let i = 0; i < out.length; i++) out[i] <<= pt;
+  // continue after the entropy-coded segment: find the next marker
+  cnt = 0;
+  while (p + 1 < bytes.length && !(bytes[p] === 0xFF && bytes[p + 1] !== 0 && !(bytes[p + 1] >= 0xD0 && bytes[p + 1] <= 0xD7))) p++;
+  return p;
+}
+
+// A JPEG whose DICOM header says RGB was encoded without the YCbCr transform.
+// Browsers assume YCbCr for 3-component JPEGs unless an Adobe APP14 segment
+// says otherwise, so insert one (transform = 0) when it is missing.
+function markJpegAsRGB(bytes) {
+  // drop any existing (possibly malformed) Adobe segment, then insert a canonical one
+  let p = 2, cut = null;
+  while (p + 4 <= bytes.length && bytes[p] === 0xFF) {
+    const m = bytes[p + 1];
+    if (m === 0xDA || m === 0xD9) break;
+    const len = (bytes[p + 2] << 8) | bytes[p + 3];
+    if (m === 0xEE && bytes[p + 4] === 0x41 && bytes[p + 5] === 0x64) {
+      if (len === 14 && bytes[p + 15] === 0) return bytes; // already says "no transform"
+      cut = [p, p + 2 + len]; break;
+    }
+    p += 2 + len;
+  }
+  const app14 = [0xFF, 0xEE, 0x00, 0x0E, 0x41, 0x64, 0x6F, 0x62, 0x65, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00];
+  const body = cut ? concat([bytes.subarray(2, cut[0]), bytes.subarray(cut[1])]) : bytes.subarray(2);
+  const out = new Uint8Array(2 + app14.length + body.length);
+  out.set(bytes.subarray(0, 2), 0); out.set(app14, 2); out.set(body, 2 + app14.length);
+  return out;
+}
+// Decode with the browser's own image decoder (JPEG baseline, and JPEG 2000 on Safari).
+async function decodeNative(bytes, mime) {
+  const blob = new Blob([bytes], { type: mime });
+  let bmp;
+  try { bmp = await createImageBitmap(blob); } catch (e) { throw new Error('browser could not decode this image'); }
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
+  const img = ctx.getImageData(0, 0, c.width, c.height); bmp.close && bmp.close();
+  return img;
+}
+
+// ------------------------------------------------------------ study model
+function seriesNormal(iop) {
+  if (!iop || iop.length !== 6) return null;
+  const [rx, ry, rz, cx, cy, cz] = iop;
+  return [ry * cz - rz * cy, rz * cx - rx * cz, rx * cy - ry * cx];
+}
+function planeName(iop) {
+  const nrm = seriesNormal(iop); if (!nrm) return '';
+  const a = nrm.map(Math.abs); const i = a.indexOf(Math.max(...a));
+  return ['sagittal', 'coronal', 'axial'][i];
+}
+function slicePosition(ds) {
+  const iop = ds.nums(T.ImageOrientationPatient), ipp = ds.nums(T.ImagePositionPatient);
+  const nrm = seriesNormal(iop);
+  if (nrm && ipp.length === 3) return nrm[0] * ipp[0] + nrm[1] * ipp[1] + nrm[2] * ipp[2];
+  const sl = ds.num(T.SliceLocation); return sl == null ? null : sl;
+}
+// Enhanced multi-frame objects keep geometry in functional-group sequences.
+function functionalFallback(ds, tag, seqTag) {
+  const shared = ds.seq(T.SharedFunctionalGroupsSequence)[0];
+  const perFrame = ds.seq(T.PerFrameFunctionalGroupsSequence)[0];
+  for (const fg of [shared, perFrame]) { if (!fg) continue; const inner = fg.seq(seqTag)[0]; if (inner && inner.has(tag)) return inner; }
+  return null;
+}
+
+class Instance {
+  constructor(ds, name) {
+    this.ds = ds; this.name = name;
+    this.rows = ds.num(T.Rows); this.cols = ds.num(T.Columns);
+    this.spp = ds.num(T.SamplesPerPixel) || 1;
+    this.bits = ds.num(T.BitsAllocated) || 16; this.bitsStored = ds.num(T.BitsStored) || this.bits;
+    this.signed = (ds.num(T.PixelRepresentation) || 0) === 1;
+    this.photometric = (ds.str(T.PhotometricInterpretation) || 'MONOCHROME2').toUpperCase();
+    this.planar = ds.num(T.PlanarConfiguration) || 0;
+    this.frames = Math.max(1, ds.num(T.NumberOfFrames) || 1);
+    this.ts = ds.transferSyntax;
+    let slope = ds.num(T.RescaleSlope), intercept = ds.num(T.RescaleIntercept);
+    if (slope == null) { const fg = functionalFallback(ds, T.RescaleSlope, T.PixelValueTransformationSequence); if (fg) { slope = fg.num(T.RescaleSlope); intercept = fg.num(T.RescaleIntercept); } }
+    this.slope = slope || 1; this.intercept = intercept || 0;
+    let spacing = ds.nums(T.PixelSpacing);
+    if (spacing.length !== 2) { const fg = functionalFallback(ds, T.PixelSpacing, T.PixelMeasuresSequence); if (fg) spacing = fg.nums(T.PixelSpacing); }
+    this.spacing = spacing.length === 2 ? spacing : null; // [row, col] mm
+    this.aspect = this.spacing ? this.spacing[0] / this.spacing[1] : (() => { const par = ds.nums(T.PixelAspectRatio); return par.length === 2 && par[1] ? par[0] / par[1] : 1; })();
+    let thickness = ds.num(T.SliceThickness);
+    if (thickness == null) { const fg = functionalFallback(ds, T.SliceThickness, T.PixelMeasuresSequence); if (fg) thickness = fg.num(T.SliceThickness); }
+    this.thickness = thickness;
+    this.iop = ds.nums(T.ImageOrientationPatient);
+    if (this.iop.length !== 6) { const fg = functionalFallback(ds, T.ImageOrientationPatient, T.PlaneOrientationSequence); if (fg) this.iop = fg.nums(T.ImageOrientationPatient); }
+    this.position = slicePosition(ds);
+    if (this.position == null) { const fg = functionalFallback(ds, T.ImagePositionPatient, T.PlanePositionSequence); if (fg && this.iop.length === 6) { const nrm = seriesNormal(this.iop), ipp = fg.nums(T.ImagePositionPatient); if (ipp.length === 3) this.position = nrm[0] * ipp[0] + nrm[1] * ipp[1] + nrm[2] * ipp[2]; } }
+    this.instanceNumber = ds.num(T.InstanceNumber);
+    let wc = ds.nums(T.WindowCenter), ww = ds.nums(T.WindowWidth);
+    if (!wc.length) { const fg = functionalFallback(ds, T.WindowCenter, T.FrameVOILUTSequence); if (fg) { wc = fg.nums(T.WindowCenter); ww = fg.nums(T.WindowWidth); } }
+    this.window = (wc.length && ww.length && ww[0] > 0) ? { c: wc[0], w: ww[0] } : null;
+    // keep only the pixel bytes; the rest of the file buffer can be freed
+    const pd = ds.get(T.PixelData);
+    if (!pd) throw new Error('no pixel data');
+    this.pixelVR = pd.vr;
+    if (pd.encapsulated) { this.fragments = pd.fragments.map(f => f.slice()); this.pixelBytes = null; }
+    else {
+      this.pixelBytes = ds.u8.slice(pd.off, pd.off + pd.len); this.fragments = null;
+      // big-endian files: 16/32-bit samples need swapping, and 8-bit samples in OW words are pair-swapped
+      const bps = this.bits / 8;
+      if (this.ts === TS.EXPLICIT_BE && (bps > 1 || (bps === 1 && pd.vr === 'OW'))) {
+        const b = this.pixelBytes, w = Math.max(2, bps);
+        for (let i = 0; i + w <= b.length; i += w) for (let a = 0, z = w - 1; a < z; a++, z--) { const t = b[i + a]; b[i + a] = b[i + z]; b[i + z] = t; }
+      }
+    }
+    this.palette = this.photometric === 'PALETTE COLOR' ? readPalette(ds) : null;
+    this.cache = new Map();
+  }
+  // Frame bytes for uncompressed data, honouring 1-bit packing and big endian.
+  rawFrame(i) {
+    const npx = this.rows * this.cols * this.spp;
+    if (this.bits === 1) {
+      const out = new Uint8Array(npx); const base = i * npx;
+      for (let k = 0; k < npx; k++) { const b = base + k; out[k] = (this.pixelBytes[b >> 3] >> (b & 7)) & 1; }
+      return out;
+    }
+    if (this.photometric === 'YBR_FULL_422' && this.bits === 8 && this.spp === 3) {
+      // 4:2:2 chroma subsampling: Y0 Y1 Cb Cr per two pixels -> expand to full YBR triples
+      const size = this.rows * this.cols * 2; const src = this.pixelBytes.subarray(i * size, (i + 1) * size); const out = new Uint8Array(npx);
+      for (let k = 0, q = 0; k + 3 < src.length; k += 4, q += 6) { out[q] = src[k]; out[q + 1] = src[k + 2]; out[q + 2] = src[k + 3]; out[q + 3] = src[k + 1]; out[q + 4] = src[k + 2]; out[q + 5] = src[k + 3]; }
+      return out;
+    }
+    const bps = this.bits / 8; const size = npx * bps; const start = i * size;
+    if (start + size > this.pixelBytes.length) { const padded = new Uint8Array(size); padded.set(this.pixelBytes.subarray(start, Math.min(this.pixelBytes.length, start + size))); return this.typed(padded); }
+    return this.typed(this.pixelBytes.slice(start, start + size));
+  }
+  typed(bytes) {
+    const bps = this.bits / 8;
+    if (bps === 1) return this.signed ? new Int8Array(bytes.buffer, bytes.byteOffset, bytes.length) : bytes;
+    if (bps === 2) return this.signed ? new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1) : new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1);
+    if (bps === 4) return this.signed ? new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2) : new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2);
+    if (bps === 8) return new Float64Array(bytes.buffer, bytes.byteOffset, bytes.length >> 3);
+    throw new Error(`unsupported bits allocated: ${this.bits}`);
+  }
+  fragmentsForFrame(i) {
+    const fr = this.fragments;
+    if (this.frames === 1) return fr.length === 1 ? fr[0] : concat(fr);
+    if (fr.length === this.frames) return fr[i];
+    // several fragments per frame: split on JPEG start-of-image markers
+    const starts = []; fr.forEach((f, k) => { if (f[0] === 0xFF && f[1] === 0xD8) starts.push(k); });
+    if (starts.length === this.frames) { const a = starts[i], b = i + 1 < starts.length ? starts[i + 1] : fr.length; return concat(fr.slice(a, b)); }
+    throw new Error('cannot map fragments to frames');
+  }
+  async decode(i) {
+    if (this.cache.has(i)) return this.cache.get(i);
+    const f = await this.decodeUncached(i);
+    this.cache.set(i, f);
+    return f;
+  }
+  async decodeUncached(i) {
+    const { rows, cols, spp } = this;
+    let samples; // typed array, interleaved
+    const ts = this.ts;
+    if (!this.fragments) samples = this.rawFrame(i);
+    else if (ts === TS.RLE) {
+      const bytes = decodeRLE(this.fragmentsForFrame(i), rows, cols, spp, this.bits / 8);
+      samples = this.typed(bytes);
+    } else if (ts === TS.JPEG_LOSSLESS || ts === TS.JPEG_LOSSLESS_SV1) {
+      const j = decodeJpegLossless(this.fragmentsForFrame(i));
+      if (j.width !== cols || j.height !== rows) throw new Error('JPEG size does not match header');
+      samples = j.data;
+      if (this.signed && this.bits === 16) {
+        samples = new Int16Array(samples.buffer, samples.byteOffset, samples.length);
+        const sh = 32 - this.bitsStored; // sign-extend from BitsStored bits (JS shifts are 32-bit)
+        if (this.bitsStored < 16) for (let k = 0; k < samples.length; k++) samples[k] = ((samples[k] & 0xFFFF) << sh) >> sh;
+      } else if (this.signed && this.bits === 8) {
+        samples = new Int8Array(samples.buffer, samples.byteOffset, samples.length);
+        const sh = 32 - this.bitsStored; if (this.bitsStored < 8) for (let k = 0; k < samples.length; k++) samples[k] = ((samples[k] & 0xFF) << sh) >> sh;
+      }
+    } else if (ts === TS.JPEG_BASELINE || ts === TS.JPEG_EXTENDED || ts === TS.J2K || ts === TS.J2K_LOSSLESS || ts === TS.HTJ2K || ts === TS.HTJ2K_LOSSLESS || ts === TS.HTJ2K_RPCL) {
+      const mime = (ts === TS.JPEG_BASELINE || ts === TS.JPEG_EXTENDED) ? 'image/jpeg' : 'image/jp2';
+      let img; let bytes = this.fragmentsForFrame(i);
+      if (mime === 'image/jpeg' && this.photometric === 'RGB') bytes = markJpegAsRGB(bytes);
+      try { img = await decodeNative(bytes, mime); }
+      catch (e) { throw new Error(`${TS_NAMES[ts] || ts}: ${mime === 'image/jp2' ? 'browsers other than Safari cannot decode JPEG 2000' : (ts === TS.JPEG_EXTENDED ? '12-bit JPEG is not decodable in browsers' : e.message)}. Use tools/dicom_export.py.`); }
+      if (spp >= 3) return { rgba: img.data, width: img.width, height: img.height };
+      // grey JPEG decoded by the browser: take the red channel
+      const g = new Uint8Array(img.width * img.height); for (let k = 0; k < g.length; k++) g[k] = img.data[k * 4];
+      return { gray: g, width: img.width, height: img.height };
+    } else {
+      throw new Error(`${TS_NAMES[ts] || ts} is not supported in the browser. Use tools/dicom_export.py.`);
+    }
+    if (spp >= 3) return { rgba: toRGBA(samples, rows, cols, spp, this.planar, this.photometric, this.bits), width: cols, height: rows };
+    if (this.palette) return { rgba: applyPalette(samples, this.palette, rows * cols), width: cols, height: rows };
+    return { gray: samples, width: cols, height: rows };
+  }
+}
+function concat(arrs) { const n = arrs.reduce((a, b) => a + b.length, 0); const out = new Uint8Array(n); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; }
+function toRGBA(s, rows, cols, spp, planar, pi, bits) {
+  const npx = rows * cols; const out = new Uint8ClampedArray(npx * 4);
+  const shift = bits > 8 ? bits - 8 : 0;
+  const ybr = pi.startsWith('YBR') && pi !== 'YBR_RCT' && pi !== 'YBR_ICT';
+  for (let i = 0; i < npx; i++) {
+    let r, g, b;
+    if (planar === 1) { r = s[i]; g = s[npx + i]; b = s[2 * npx + i]; } else { r = s[i * spp]; g = s[i * spp + 1]; b = s[i * spp + 2]; }
+    if (shift) { r >>>= shift; g >>>= shift; b >>>= shift; }
+    if (ybr) { const Y = r, cb = g - 128, cr = b - 128; r = Y + 1.402 * cr; g = Y - 0.344136 * cb - 0.714136 * cr; b = Y + 1.772 * cb; }
+    out[i * 4] = r; out[i * 4 + 1] = g; out[i * 4 + 2] = b; out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+function readPalette(ds) {
+  const desc = ds.nums(T.RedPaletteColorLookupTableDescriptor); if (desc.length !== 3) return null;
+  const n = desc[0] || 65536, first = desc[1], bitsLUT = desc[2];
+  const read = (tag) => { const e = ds.get(tag); if (!e || e.off == null) return null; const out = new Uint16Array(n); const dv = ds.dv; const step = e.len >= n * 2 ? 2 : 1;
+    for (let i = 0; i < n; i++) out[i] = step === 2 ? dv.getUint16(e.off + i * 2, ds.le) : ds.u8[e.off + i]; return out; };
+  const r = read(T.RedPaletteColorLookupTableData), g = read(T.GreenPaletteColorLookupTableData), b = read(T.BluePaletteColorLookupTableData);
+  if (!r || !g || !b) return null;
+  return { r, g, b, first, n, shift: bitsLUT > 8 ? bitsLUT - 8 : 0 };
+}
+function applyPalette(s, pal, npx) {
+  const out = new Uint8ClampedArray(npx * 4);
+  for (let i = 0; i < npx; i++) { const k = clamp(s[i] - pal.first, 0, pal.n - 1); out[i * 4] = pal.r[k] >> pal.shift; out[i * 4 + 1] = pal.g[k] >> pal.shift; out[i * 4 + 2] = pal.b[k] >> pal.shift; out[i * 4 + 3] = 255; }
+  return out;
+}
+
+class Series {
+  constructor(key, first) {
+    this.key = key; this.instances = []; this.ds = first.ds;
+    this.description = first.ds.str(T.SeriesDescription) || first.ds.str(T.ProtocolName) || '(no description)';
+    this.number = first.ds.num(T.SeriesNumber); this.modality = first.ds.str(T.Modality) || '';
+    this.plane = planeName(first.iop);
+    this.window = null; this.defaultWindow = null; this.thumb = null; this.error = null;
+  }
+  finalize() {
+    this.instances.sort((a, b) => {
+      if (a.position != null && b.position != null && a.position !== b.position) return a.position - b.position;
+      if (a.instanceNumber != null && b.instanceNumber != null && a.instanceNumber !== b.instanceNumber) return a.instanceNumber - b.instanceNumber;
+      return a.name.localeCompare(b.name, undefined, { numeric: true });
+    });
+    this.frameIndex = []; // [instanceIdx, frameIdx]
+    this.instances.forEach((inst, k) => { for (let f = 0; f < inst.frames; f++) this.frameIndex.push([k, f]); });
+    this.count = this.frameIndex.length;
+    const f = this.instances[0];
+    this.rows = f.rows; this.cols = f.cols; this.spacing = f.spacing; this.thickness = f.thickness; this.aspect = f.aspect;
+    this.isColor = f.spp >= 3 || !!f.palette;
+    this.ts = f.ts;
+  }
+  instanceAt(i) { const [k, f] = this.frameIndex[i]; return { inst: this.instances[k], frame: f }; }
+  async frame(i) { const { inst, frame } = this.instanceAt(i); return inst.decode(frame); }
+  // series-wide spacing between slices, from positions
+  sliceGap() {
+    const pos = this.instances.map(i => i.position).filter(p => p != null);
+    if (pos.length < 2) return this.ds.num(T.SpacingBetweenSlices) || this.thickness;
+    const gaps = []; for (let i = 1; i < pos.length; i++) gaps.push(Math.abs(pos[i] - pos[i - 1]));
+    gaps.sort((a, b) => a - b); return gaps[gaps.length >> 1];
+  }
+}
+
+const study = { series: [], files: 0, skipped: [], failed: [], ds: null };
+
+function seriesKeyFor(inst) {
+  const uid = inst.ds.str(T.SeriesInstanceUID) || `noseries|${inst.ds.str(T.SeriesNumber) || ''}|${inst.name.replace(/[^/]*$/, '')}`;
+  const nrm = seriesNormal(inst.iop); const o = nrm ? nrm.map(v => v.toFixed(1)).join(',') : '';
+  return `${uid}|${inst.rows}x${inst.cols}|${inst.spp}|${o}`;
+}
+
+async function loadFiles(files) { // files: [{name, data: Uint8Array | ArrayBuffer}] or File objects
+  resetStudy();
+  $('dropzone').classList.add('hidden');
+  const t0 = performance.now();
+  const seriesMap = new Map(); let n = 0; const total = files.length;
+  for (const f of files) {
+    n++;
+    if (n % 4 === 0) { setProgress(n / total); await nextFrame(); }
+    let buf;
+    try { buf = f.data ? (f.data.buffer ? f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength) : f.data) : await f.arrayBuffer(); }
+    catch (e) { study.failed.push(`${f.name}: ${e.message}`); continue; }
+    if (/\.zip$/i.test(f.name) || (buf.byteLength > 4 && new DataView(buf).getUint32(0, true) === 0x04034b50)) {
+      try {
+        const zip = await readZip(buf); const inner = [];
+        let k = 0;
+        for (const e of zip.entries) { if (/__MACOSX|\.DS_Store$/.test(e.name)) continue; k++; if (k % 8 === 0) { setProgress(k / zip.entries.length); await nextFrame(); } inner.push({ name: f.name + '/' + e.name, data: await zip.readEntry(e) }); }
+        await ingest(inner, seriesMap);
+      } catch (e) { study.failed.push(`${f.name}: ${e.message}`); }
+      continue;
+    }
+    await ingest([{ name: f.name, data: new Uint8Array(buf) }], seriesMap);
+  }
+  setProgress(null);
+  study.series = [...seriesMap.values()];
+  study.series.forEach(s => s.finalize());
+  study.series.sort((a, b) => (a.number ?? 1e9) - (b.number ?? 1e9) || a.description.localeCompare(b.description));
+  // disambiguate split series (same UID, different geometry)
+  const seen = new Map();
+  for (const s of study.series) { const uid = s.key.split('|')[0]; const c = (seen.get(uid) || 0) + 1; seen.set(uid, c); if (c > 1) s.description += ` (${String.fromCharCode(96 + c)})`; }
+  for (const s of study.series) { const uid = s.key.split('|')[0]; if (seen.get(uid) > 1 && !/\([a-z]\)$/.test(s.description)) s.description += ' (a)'; }
+  study.ds = study.series.length ? study.series[0].ds : null;
+  renderSeriesList();
+  if (!study.series.length) {
+    $('dropzone').classList.remove('hidden');
+    toast(study.failed.length ? `No images could be read. First problem: ${study.failed[0]}` : 'No DICOM images found in those files.', true);
+    return;
+  }
+  await selectSeries(0);
+  const secs = ((performance.now() - t0) / 1000).toFixed(1);
+  toast(`${study.series.length} series, ${study.series.reduce((a, s) => a + s.count, 0)} images loaded in ${secs}s` + (study.failed.length ? `, ${study.failed.length} file(s) failed` : ''));
+  makeThumbnails();
+}
+async function ingest(list, seriesMap) {
+  for (const item of list) {
+    study.files++;
+    let ds;
+    try {
+      const ab = item.data.buffer.byteLength === item.data.byteLength && item.data.byteOffset === 0 ? item.data.buffer : item.data.slice().buffer;
+      ds = await parseDicom(ab);
+    } catch (e) { if (e.message !== 'not DICOM' && e.message !== 'too small') study.failed.push(`${item.name}: ${e.message}`); else study.skipped.push(item.name); continue; }
+    if (!ds.has(T.PixelData) || !ds.num(T.Rows) || !ds.num(T.Columns)) { study.skipped.push(item.name); continue; }
+    let inst;
+    try { inst = new Instance(ds, item.name); } catch (e) { study.failed.push(`${item.name}: ${e.message}`); continue; }
+    const key = seriesKeyFor(inst);
+    if (!seriesMap.has(key)) seriesMap.set(key, new Series(key, inst));
+    seriesMap.get(key).instances.push(inst);
+  }
+}
+function resetStudy() { study.series = []; study.files = 0; study.skipped = []; study.failed = []; study.ds = null; view.series = null; stopCine(); }
+
+// ------------------------------------------------------------ rendering
+const view = {
+  series: null, index: 0, ww: 1, wc: 0, invert: false, zoom: 1, pan: { x: 0, y: 0 }, fit: true, smooth: true, overlay: true,
+  rulerMode: false, ruler: null, frame: null, probe: null, off: document.createElement('canvas'), offCtx: null,
+};
+view.offCtx = view.off.getContext('2d', { willReadFrequently: true });
+const canvas = $('canvas'), ctx = canvas.getContext('2d');
+const viewport = $('viewport');
+let dpr = window.devicePixelRatio || 1;
+
+function windowFromFrame(frame, inst) { // percentile window ignoring the background (most common minimum)
+  const g = frame.gray; if (!g) return { c: 128, w: 256 };
+  const n = g.length; const step = Math.max(1, Math.floor(n / 50000)); const vals = [];
+  let min = Infinity;
+  for (let i = 0; i < n; i += step) { const v = g[i]; vals.push(v); if (v < min) min = v; }
+  let fg = vals.filter(v => v > min); if (fg.length < 100) fg = vals;
+  fg.sort((a, b) => a - b);
+  const lo = fg[Math.floor(fg.length * 0.005)], hi = fg[Math.min(fg.length - 1, Math.floor(fg.length * 0.995))];
+  const w = Math.max(1, (hi - lo)) * inst.slope, c = ((hi + lo) / 2) * inst.slope + inst.intercept;
+  return { c, w };
+}
+function fullRangeWindow(frame, inst) {
+  const g = frame.gray; let min = Infinity, max = -Infinity; for (let i = 0; i < g.length; i++) { const v = g[i]; if (v < min) min = v; if (v > max) max = v; }
+  return { c: ((min + max) / 2) * inst.slope + inst.intercept, w: Math.max(1, (max - min) * inst.slope) };
+}
+
+async function selectSeries(i) {
+  const s = study.series[i]; if (!s) return;
+  view.series = s; view.index = Math.floor(s.count / 2); view.ruler = null; stopCine();
+  document.querySelectorAll('.series').forEach((el, k) => el.classList.toggle('active', k === i));
+  const el = document.querySelectorAll('.series')[i]; if (el) el.scrollIntoView({ block: 'nearest' });
+  $('slider').max = s.count - 1; $('slider').value = view.index;
+  try {
+    const f = await s.frame(view.index); const inst = s.instanceAt(view.index).inst;
+    if (!s.defaultWindow) {
+      s.defaultWindow = f.gray ? (inst.window || windowFromFrame(f, inst)) : { c: 128, w: 256 };
+      s.autoWindow = f.gray ? windowFromFrame(f, inst) : { c: 128, w: 256 };
+      s.fullWindow = f.gray ? fullRangeWindow(f, inst) : { c: 128, w: 256 };
+    }
+    s.error = null;
+  } catch (e) { s.error = e.message; toast(e.message, true); renderSeriesList(); }
+  view.wc = s.defaultWindow ? s.defaultWindow.c : 128; view.ww = s.defaultWindow ? s.defaultWindow.w : 256;
+  $('preset').value = (s.instances[0].window ? 'dicom' : 'auto');
+  configureWLSliders(s);
+  view.fit = true; view.zoom = 1; view.pan = { x: 0, y: 0 };
+  await showFrame(view.index);
+  $('studyline').textContent = studyLine();
+}
+function configureWLSliders(s) {
+  const full = s.fullWindow || { c: 128, w: 256 };
+  const lo = full.c - full.w, hi = full.c + full.w;
+  const wwEl = $('ww'), wcEl = $('wc');
+  const wStep = Math.max(1e-3, full.w / 1000), cStep = Math.max(1e-3, (hi - lo) / 1000);
+  wwEl.min = wStep; wwEl.max = Math.max(full.w * 2, view.ww * 2); wwEl.step = wStep;
+  wcEl.min = Math.min(lo, view.wc); wcEl.max = Math.max(hi, view.wc); wcEl.step = cStep;
+  syncWL();
+}
+function syncWL() {
+  $('ww').value = view.ww; $('wc').value = view.wc; $('ww-out').value = fmt(view.ww); $('wc-out').value = fmt(view.wc);
+}
+
+async function showFrame(i) {
+  const s = view.series; if (!s) return;
+  view.index = clamp(i, 0, s.count - 1); $('slider').value = view.index;
+  let f;
+  try { f = await s.frame(view.index); } catch (e) { toast(`Slice ${view.index + 1}: ${e.message}`, true); drawEmpty(e.message); return; }
+  view.frame = f;
+  paintFrame(f, s.instanceAt(view.index).inst, view.off, view.offCtx, view.wc, view.ww, view.invert);
+  draw();
+  updateOverlay();
+  updateTags();
+  // pre-decode neighbours so scrolling stays smooth
+  for (const k of [view.index + 1, view.index - 1, view.index + 2]) if (k >= 0 && k < s.count) s.frame(k).catch(() => {});
+}
+function paintFrame(f, inst, target, tctx, wc, ww, invert) {
+  target.width = f.width; target.height = f.height;
+  const img = tctx.createImageData(f.width, f.height); const d = img.data;
+  if (f.rgba) { d.set(f.rgba); if (invert) for (let i = 0; i < d.length; i += 4) { d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2]; } }
+  else {
+    const g = f.gray; const slope = inst.slope, icpt = inst.intercept;
+    const lo = wc - 0.5 - (ww - 1) / 2, scale = 255 / Math.max(ww - 1, 1e-6);
+    const flip = (inst.photometric === 'MONOCHROME1') !== invert;
+    for (let i = 0, j = 0; i < g.length; i++, j += 4) {
+      let y = ((g[i] * slope + icpt) - lo) * scale; y = y < 0 ? 0 : y > 255 ? 255 : y; if (flip) y = 255 - y;
+      d[j] = d[j + 1] = d[j + 2] = y; d[j + 3] = 255;
+    }
+  }
+  tctx.putImageData(img, 0, 0);
+}
+function drawEmpty(msg) {
+  const w = canvas.width, h = canvas.height; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#e5646b'; ctx.font = `${13 * dpr}px IBM Plex Mono, monospace`; ctx.textAlign = 'center'; ctx.fillText(msg, w / 2, h / 2);
+}
+function geometry() { // image -> screen transform in CSS pixels
+  const s = view.series; const f = view.frame; if (!s || !f) return null;
+  const W = viewport.clientWidth, H = viewport.clientHeight;
+  const iw = f.width, ih = f.height * s.aspect;
+  const fitScale = Math.min(W / iw, H / ih) * 0.98;
+  const scale = fitScale * view.zoom;
+  const x0 = W / 2 - iw * scale / 2 + view.pan.x, y0 = H / 2 - ih * scale / 2 + view.pan.y;
+  return { scale, x0, y0, iw, ih, W, H, aspect: s.aspect };
+}
+function draw() {
+  const g = geometry();
+  const W = canvas.width = Math.round(viewport.clientWidth * dpr), H = canvas.height = Math.round(viewport.clientHeight * dpr);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  if (!g) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = view.smooth; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(view.off, g.x0, g.y0, g.iw * g.scale, g.ih * g.scale);
+  if (view.ruler) drawRuler(g);
+}
+function drawRuler(g) {
+  const r = view.ruler; const a = imgToScreen(r.p1, g), b = imgToScreen(r.p2, g);
+  ctx.strokeStyle = '#f5c451'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.fillStyle = '#f5c451'; for (const p of [a, b]) { ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); }
+  const label = rulerLabel(r); ctx.font = '12px IBM Plex Mono, monospace'; ctx.textAlign = 'left';
+  const mx = (a.x + b.x) / 2 + 8, my = (a.y + b.y) / 2 - 8;
+  ctx.fillStyle = 'rgba(0,0,0,.7)'; const tw = ctx.measureText(label).width; ctx.fillRect(mx - 3, my - 12, tw + 6, 16);
+  ctx.fillStyle = '#f5c451'; ctx.fillText(label, mx, my);
+}
+function rulerLabel(r) {
+  const s = view.series; const dx = r.p2.x - r.p1.x, dy = r.p2.y - r.p1.y;
+  if (s.spacing) { const mm = Math.hypot(dx * s.spacing[1], dy * s.spacing[0]); return `${mm.toFixed(1)} mm`; }
+  return `${Math.hypot(dx, dy).toFixed(1)} px (no pixel spacing)`;
+}
+function imgToScreen(p, g) { return { x: g.x0 + p.x * g.scale, y: g.y0 + p.y * g.aspect * g.scale }; }
+function screenToImg(x, y, g) { return { x: (x - g.x0) / g.scale, y: (y - g.y0) / g.scale / g.aspect }; }
+
+function priv() { return $('privacy').checked; }
+function patientLine(ds) {
+  if (priv()) return 'Patient: hidden';
+  const name = (ds.str(T.PatientName) || '').replace(/\^+/g, ' ').trim(); return `${name || '(no name)'}  ${ds.str(T.PatientID) || ''}`.trim();
+}
+function updateOverlay() {
+  const s = view.series; if (!s) return;
+  const on = view.overlay;
+  for (const id of ['ov-tl', 'ov-tr', 'ov-bl', 'ov-br']) $(id).style.display = on ? '' : 'none';
+  if (!on) return;
+  const { inst, frame } = s.instanceAt(view.index); const ds = inst.ds;
+  const date = ds.str(T.StudyDate) || ''; const dateFmt = date.length === 8 ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}` : date;
+  $('ov-tl').textContent = [patientLine(ds), `${ds.str(T.StudyDescription) || ''} ${dateFmt}`.trim(), `S${s.number ?? '?'}: ${s.description}`, `${s.modality} ${s.plane}`.trim()].join('\n');
+  const pos = inst.position; const posTxt = pos == null ? '' : `pos ${fmt(pos)} mm`;
+  const sp = s.spacing ? `${fmt(s.spacing[1], 2)}×${fmt(s.spacing[0], 2)} mm/px` : 'no spacing';
+  const fr = inst.frames > 1 ? `frame ${frame + 1}/${inst.frames}  ` : '';
+  $('ov-tr').textContent = [`${fr}Im ${view.index + 1}/${s.count}`, posTxt, `${inst.cols}×${inst.rows}  ${sp}`, s.thickness != null ? `thk ${fmt(s.thickness)} mm` : ''].filter(Boolean).join('\n');
+  const probe = view.probe ? `(${view.probe.x}, ${view.probe.y}) = ${view.probe.v}` : '';
+  $('ov-bl').textContent = [s.isColor ? 'colour image' : `W ${fmt(view.ww)}  L ${fmt(view.wc)}${view.invert ? '  inverted' : ''}`, probe, view.rulerMode ? 'ruler: drag to measure' : ''].filter(Boolean).join('\n');
+  const te = ds.str(T.EchoTime), tr = ds.str(T.RepetitionTime); const seq = [ds.str(T.SequenceName), te && `TE ${fmt(+te)}`, tr && `TR ${fmt(+tr)}`].filter(Boolean).join(' ');
+  $('ov-br').textContent = [`zoom ${(view.zoom * 100).toFixed(0)}%`, seq, TS_NAMES[inst.ts] || ''].filter(Boolean).join('\n');
+}
+function studyLine() {
+  const ds = study.ds; if (!ds) return '';
+  return [ds.str(T.StudyDescription), ds.str(T.StudyDate), `${study.series.length} series`].filter(Boolean).join(' · ');
+}
+
+function renderSeriesList() {
+  const ul = $('series-list'); ul.innerHTML = '';
+  $('series-count').textContent = study.series.length ? `${study.series.length}` : '';
+  study.series.forEach((s, i) => {
+    const li = document.createElement('li'); li.className = 'series' + (s === view.series ? ' active' : ''); li.tabIndex = 0;
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64; if (s.thumb) c.getContext('2d').drawImage(s.thumb, 0, 0);
+    const t = document.createElement('div'); t.className = 't';
+    t.innerHTML = `<b title="${escapeHtml(s.description)}">${escapeHtml(s.description)}</b><small>S${s.number ?? '?'} · ${escapeHtml(s.modality)} ${escapeHtml(s.plane)}</small><small>${s.cols}×${s.rows} · ${s.count} im</small>${s.error ? `<span class="err">${escapeHtml(s.error)}</span>` : ''}`;
+    li.append(c, t); li.addEventListener('click', () => selectSeries(i));
+    li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectSeries(i); } });
+    ul.append(li);
+  });
+}
+async function makeThumbnails() {
+  const lis = document.querySelectorAll('.series');
+  for (let i = 0; i < study.series.length; i++) {
+    const s = study.series[i]; if (s.thumb) continue;
+    try {
+      const idx = Math.floor(s.count / 2); const f = await s.frame(idx); const inst = s.instanceAt(idx).inst;
+      if (!s.defaultWindow) { s.defaultWindow = f.gray ? (inst.window || windowFromFrame(f, inst)) : { c: 128, w: 256 }; s.autoWindow = f.gray ? windowFromFrame(f, inst) : s.defaultWindow; s.fullWindow = f.gray ? fullRangeWindow(f, inst) : s.defaultWindow; }
+      const off = document.createElement('canvas'); paintFrame(f, inst, off, off.getContext('2d'), s.defaultWindow.c, s.defaultWindow.w, false);
+      const th = document.createElement('canvas'); th.width = 64; th.height = 64; const tc = th.getContext('2d');
+      const iw = f.width, ih = f.height * s.aspect; const sc = Math.min(64 / iw, 64 / ih);
+      tc.fillStyle = '#000'; tc.fillRect(0, 0, 64, 64); tc.drawImage(off, 32 - iw * sc / 2, 32 - ih * sc / 2, iw * sc, ih * sc);
+      s.thumb = th;
+      const c = lis[i] && lis[i].querySelector('canvas'); if (c) c.getContext('2d').drawImage(th, 0, 0);
+    } catch (e) { s.error = e.message; const t = lis[i] && lis[i].querySelector('.t'); if (t && !t.querySelector('.err')) { const sp = document.createElement('span'); sp.className = 'err'; sp.textContent = e.message; t.append(sp); } }
+    await nextFrame();
+  }
+}
+function escapeHtml(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ------------------------------------------------------------ tag panels
+const IMAGE_TAGS = ['Modality', 'SeriesDescription', 'ProtocolName', 'SequenceName', 'ScanningSequence', 'SequenceVariant', 'MRAcquisitionType', 'EchoTime', 'RepetitionTime', 'InversionTime', 'FlipAngle',
+  'MagneticFieldStrength', 'ContrastBolusAgent', 'BodyPartExamined', 'SliceThickness', 'SpacingBetweenSlices', 'PixelSpacing', 'Rows', 'Columns', 'ImagePositionPatient', 'ImageOrientationPatient',
+  'SliceLocation', 'InstanceNumber', 'AcquisitionNumber', 'ImageType', 'PhotometricInterpretation', 'BitsStored', 'PixelRepresentation', 'RescaleSlope', 'RescaleIntercept', 'WindowCenter', 'WindowWidth',
+  'KVP', 'ConvolutionKernel', 'ExposureTime', 'XRayTubeCurrent', 'LossyImageCompression', 'BurnedInAnnotation', 'ImageComments'];
+const STUDY_TAGS = ['PatientName', 'PatientID', 'PatientBirthDate', 'PatientSex', 'PatientAge', 'PatientWeight', 'StudyDate', 'StudyTime', 'StudyDescription', 'AccessionNumber', 'ReferringPhysicianName',
+  'InstitutionName', 'Manufacturer', 'ManufacturerModelName', 'StationName', 'SoftwareVersions', 'PatientPosition', 'StudyInstanceUID', 'SeriesInstanceUID'];
+const PHI = new Set(['PatientName', 'PatientID', 'PatientBirthDate', 'AccessionNumber', 'ReferringPhysicianName', 'InstitutionName', 'StationName']);
+function fillTags(dl, ds, keys) {
+  dl.innerHTML = '';
+  for (const k of keys) {
+    const tag = T[k]; if (!ds.has(tag)) continue;
+    const dt = document.createElement('dt'); dt.textContent = k.replace(/([a-z])([A-Z])/g, '$1 $2'); dt.title = tagStr(tag);
+    const dd = document.createElement('dd');
+    if (PHI.has(k) && priv()) { dd.textContent = 'hidden'; dd.className = 'hid'; } else dd.textContent = ds.display(tag, 120);
+    dl.append(dt, dd);
+  }
+}
+function updateTags() {
+  const s = view.series; if (!s) return;
+  const ds = s.instanceAt(view.index).inst.ds;
+  fillTags($('tags-image'), ds, IMAGE_TAGS); fillTags($('tags-study'), ds, STUDY_TAGS);
+  const dl = $('tags-image'); const dt = document.createElement('dt'); dt.textContent = 'Transfer syntax'; const dd = document.createElement('dd'); dd.textContent = TS_NAMES[ds.transferSyntax] || ds.transferSyntax; dl.prepend(dt, dd);
+  if ($('alltags').classList.contains('show')) $('alltags').textContent = allTagsText(ds);
+}
+function allTagsText(ds, indent = '') {
+  const lines = [];
+  const tags = [...ds.el.keys()].sort((a, b) => a - b);
+  for (const tag of tags) {
+    const e = ds.el.get(tag); const name = (DICT[tag] || [null, ''])[1];
+    const hidden = priv() && name && PHI.has(name);
+    lines.push(`${indent}${tagStr(tag)} ${e.vr} ${name.padEnd(28)} ${hidden ? '(hidden)' : ds.display(tag, 60)}`);
+    if (e.items) e.items.forEach((it, i) => { lines.push(`${indent}  > item ${i + 1}`); lines.push(allTagsText(it, indent + '    ')); });
+  }
+  return lines.join('\n');
+}
+
+// ------------------------------------------------------------ export
+function studySummary(privacy = priv()) {
+  const ds = study.ds; if (!ds) return '';
+  const L = [];
+  L.push(`# DICOM study summary`, '');
+  const pf = (k, v) => { if (v) L.push(`- ${k}: ${v}`); };
+  pf('Patient', privacy ? '(hidden)' : `${(ds.str(T.PatientName) || '').replace(/\^/g, ' ')} ${ds.str(T.PatientID) || ''}`.trim());
+  pf('Sex / age', [ds.str(T.PatientSex), ds.str(T.PatientAge)].filter(Boolean).join(' / '));
+  pf('Study date', ds.str(T.StudyDate)); pf('Study', ds.str(T.StudyDescription));
+  pf('Scanner', [ds.str(T.Manufacturer), ds.str(T.ManufacturerModelName), ds.num(T.MagneticFieldStrength) && `${ds.num(T.MagneticFieldStrength)} T`].filter(Boolean).join(' '));
+  if (!privacy) pf('Institution', ds.str(T.InstitutionName));
+  L.push('', '| # | Series | Modality | Plane | Matrix | Slices | Pixel (mm) | Thick (mm) | Gap (mm) | TE/TR (ms) | Window |', '|---|---|---|---|---|---|---|---|---|---|---|');
+  study.series.forEach((s, i) => {
+    const d = s.ds; const te = d.str(T.EchoTime), tr = d.str(T.RepetitionTime);
+    const w = s.defaultWindow ? `${fmt(s.defaultWindow.w)}/${fmt(s.defaultWindow.c)}` : '';
+    L.push(`| ${i + 1} | S${s.number ?? '?'} ${s.description} | ${s.modality} | ${s.plane} | ${s.cols}×${s.rows} | ${s.count} | ${s.spacing ? `${fmt(s.spacing[1], 2)}×${fmt(s.spacing[0], 2)}` : ''} | ${fmt(s.thickness)} | ${fmt(s.sliceGap())} | ${[te && fmt(+te), tr && fmt(+tr)].filter(Boolean).join('/')} | ${w} |`);
+  });
+  L.push('', 'Window is width/centre in modality units (after rescale). Slices are ordered by position along the slice normal.');
+  L.push('Exported from Lightbox DICOM viewer. Renderings are window/levelled 8-bit images, not raw data. Viewing aid only, not for diagnosis.');
+  return L.join('\n');
+}
+
+async function renderContactSheet(s, opts) {
+  const n = s.count; const want = opts.tiles ? Math.min(opts.tiles, n) : n;
+  const picks = want > 1 ? Array.from({ length: want }, (_, i) => Math.round(i * (n - 1) / (want - 1))) : [Math.floor(n / 2)];
+  const tile = opts.tile; const cols = Math.min(want, Math.max(2, Math.ceil(Math.sqrt(want)))); const rows = Math.ceil(want / cols);
+  const header = 30; const c = document.createElement('canvas'); c.width = cols * tile; c.height = rows * tile + header;
+  const cx = c.getContext('2d'); cx.fillStyle = '#000'; cx.fillRect(0, 0, c.width, c.height);
+  const off = document.createElement('canvas'); const octx = off.getContext('2d', { willReadFrequently: true });
+  const wc = opts.wc ?? (s.defaultWindow || {}).c, ww = opts.ww ?? (s.defaultWindow || {}).w;
+  for (let k = 0; k < picks.length; k++) {
+    const i = picks[k]; const { inst } = s.instanceAt(i);
+    let f; try { f = await s.frame(i); } catch (e) { continue; }
+    paintFrame(f, inst, off, octx, wc, ww, opts.invert || false);
+    const iw = f.width, ih = f.height * s.aspect; const sc = Math.min(tile / iw, tile / ih);
+    const x = (k % cols) * tile + (tile - iw * sc) / 2, y = header + Math.floor(k / cols) * tile + (tile - ih * sc) / 2;
+    cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high'; cx.drawImage(off, x, y, iw * sc, ih * sc);
+    cx.font = `${Math.max(11, tile / 20)}px IBM Plex Mono, monospace`; cx.fillStyle = '#f5c451'; cx.textAlign = 'left'; cx.shadowColor = '#000'; cx.shadowBlur = 3;
+    const pos = inst.position; cx.fillText(`${i + 1}/${n}${pos != null ? `  ${fmt(pos)}mm` : ''}`, (k % cols) * tile + 5, header + Math.floor(k / cols) * tile + Math.max(14, tile / 18));
+    cx.shadowBlur = 0;
+    if (k % 6 === 5) await nextFrame();
+  }
+  const ds = s.ds; cx.font = '14px IBM Plex Sans, sans-serif'; cx.fillStyle = '#fff'; cx.textAlign = 'left';
+  const title = [opts.privacy ? '' : `${(ds.str(T.PatientName) || '').replace(/\^/g, ' ')} ${ds.str(T.PatientID) || ''}`.trim(), ds.str(T.StudyDate), `S${s.number ?? '?'} ${s.description}`, `${s.modality} ${s.plane}`.trim(), `${s.cols}×${s.rows} ×${n}`,
+    s.spacing ? `${fmt(s.spacing[1], 2)}×${fmt(s.spacing[0], 2)}×${fmt(s.thickness)} mm` : '', s.isColor ? '' : `W/L ${fmt(ww)}/${fmt(wc)}`].filter(Boolean).join('  |  ');
+  cx.fillText(title, 8, 20);
+  return c;
+}
+function canvasBlob(c) { return new Promise(r => c.toBlob(r, 'image/png')); }
+function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+async function copyBlob(blob) {
+  if (!navigator.clipboard || !window.ClipboardItem) throw new Error('Clipboard images need a secure (https) page in a current browser');
+  await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+}
+const safeName = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'series';
+let lastSheet = null;
+
+async function makeSheet() {
+  const s = view.series; if (!s) return toast('Load a study first', true);
+  $('btn-sheet').disabled = true;
+  try {
+    const c = await renderContactSheet(s, { tiles: +$('sheet-n').value, tile: +$('sheet-size').value, wc: view.wc, ww: view.ww, invert: view.invert, privacy: priv() });
+    lastSheet = await canvasBlob(c);
+    $('sheet-img').src = URL.createObjectURL(lastSheet); $('sheet-preview').style.display = 'block';
+    $('sheet-cap').textContent = `${c.width}×${c.height} px, ${(lastSheet.size / 1024).toFixed(0)} KB. Paste it into the chat together with the study summary.`;
+    $('btn-sheet-copy').disabled = false; $('btn-sheet-dl').disabled = false;
+    toast('Contact sheet ready');
+  } catch (e) { toast(e.message, true); }
+  $('btn-sheet').disabled = false;
+}
+async function makePack() {
+  if (!study.series.length) return toast('Load a study first', true);
+  const every = Math.max(1, +$('pack-every').value || 1); const files = []; const enc = new TextEncoder();
+  const btn = $('btn-pack'); btn.disabled = true; btn.textContent = 'Building…';
+  try {
+    const summary = [studySummary()];
+    const off = document.createElement('canvas'); const octx = off.getContext('2d', { willReadFrequently: true });
+    for (let si = 0; si < study.series.length; si++) {
+      const s = study.series[si]; const dir = `series_${String(si + 1).padStart(2, '0')}_${safeName(s.description)}`;
+      let sheet;
+      try { sheet = await renderContactSheet(s, { tiles: 36, tile: 256, privacy: priv() }); } catch (e) { summary.push(`\nSeries ${si + 1}: could not render (${e.message})`); continue; }
+      files.push({ name: `${dir}/montage.png`, data: new Uint8Array(await (await canvasBlob(sheet)).arrayBuffer()) });
+      summary.push(`\n## Series ${si + 1}: ${s.description}\n- montage: ${dir}/montage.png`);
+      const w = s.defaultWindow || { c: 128, w: 256 }; let written = 0;
+      for (let i = 0; i < s.count; i += every) {
+        let f; try { f = await s.frame(i); } catch (e) { continue; }
+        const inst = s.instanceAt(i).inst; paintFrame(f, inst, off, octx, w.c, w.w, false);
+        let out = off;
+        if (Math.abs(s.aspect - 1) > 0.01) { out = document.createElement('canvas'); out.width = f.width; out.height = Math.round(f.height * s.aspect); const oc = out.getContext('2d'); oc.imageSmoothingEnabled = true; oc.drawImage(off, 0, 0, out.width, out.height); }
+        files.push({ name: `${dir}/slice_${String(i + 1).padStart(3, '0')}.png`, data: new Uint8Array(await (await canvasBlob(out)).arrayBuffer()) });
+        written++; if (written % 5 === 0) { setProgress((si + i / s.count) / study.series.length); await nextFrame(); }
+      }
+      summary.push(`- slices: ${written} PNGs (every ${every} of ${s.count}), window ${fmt(w.w)}/${fmt(w.c)}`);
+    }
+    files.unshift({ name: 'summary.md', data: enc.encode(summary.join('\n') + '\n') });
+    download(buildZip(files), `lightbox_pack_${safeName(study.ds.str(T.StudyDescription) || 'study')}.zip`);
+    toast(`AI pack: ${files.length} files`);
+  } catch (e) { toast(e.message, true); }
+  setProgress(null); btn.disabled = false; btn.textContent = 'Download AI pack (zip)';
+}
+
+// ------------------------------------------------------------ interaction
+let cineTimer = null;
+function stopCine() { if (cineTimer) { clearInterval(cineTimer); cineTimer = null; $('btn-play').textContent = '▶'; } }
+function toggleCine() {
+  if (cineTimer) return stopCine();
+  if (!view.series) return;
+  const fps = +$('fps').value; $('btn-play').textContent = '❚❚';
+  cineTimer = setInterval(() => showFrame((view.index + 1) % view.series.count), 1000 / fps);
+}
+function step(d) { if (view.series) showFrame(view.index + d); }
+function setZoom(z, cx, cy) {
+  const g = geometry(); if (!g) return;
+  const nz = clamp(z, 0.1, 40);
+  if (cx != null) { // keep the point under the cursor fixed
+    const before = screenToImg(cx, cy, g);
+    view.zoom = nz; const g2 = geometry(); const after = imgToScreen(before, g2);
+    view.pan.x += cx - after.x; view.pan.y += cy - after.y;
+  } else view.zoom = nz;
+  view.fit = false; draw(); updateOverlay();
+}
+function fit() { view.zoom = 1; view.pan = { x: 0, y: 0 }; view.fit = true; draw(); updateOverlay(); }
+function applyWL(c, w) { view.wc = c; view.ww = Math.max(1e-3, w); syncWL(); if (view.frame) { paintFrame(view.frame, view.series.instanceAt(view.index).inst, view.off, view.offCtx, view.wc, view.ww, view.invert); draw(); updateOverlay(); } }
+function resetWL() { const s = view.series; if (!s) return; const w = s.defaultWindow || { c: 128, w: 256 }; applyWL(w.c, w.w); $('preset').value = s.instances[0].window ? 'dicom' : 'auto'; }
+
+let drag = null;
+viewport.addEventListener('pointerdown', (e) => {
+  if (!view.series) return; viewport.focus(); viewport.setPointerCapture(e.pointerId);
+  const rect = viewport.getBoundingClientRect(); const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const mode = view.rulerMode && e.button === 0 && !e.shiftKey ? 'ruler' : (e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey ? 'wl' : 'pan');
+  drag = { mode, x, y, sx: x, sy: y, wc: view.wc, ww: view.ww, px: view.pan.x, py: view.pan.y, moved: false };
+  if (mode === 'ruler') { const g = geometry(); const p = screenToImg(x, y, g); view.ruler = { p1: p, p2: p }; draw(); }
+  e.preventDefault();
+});
+viewport.addEventListener('pointermove', (e) => {
+  const rect = viewport.getBoundingClientRect(); const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const g = geometry();
+  if (!drag) {
+    if (g && view.frame && view.frame.gray) { // pixel probe
+      const p = screenToImg(x, y, g); const ix = Math.floor(p.x), iy = Math.floor(p.y);
+      if (ix >= 0 && iy >= 0 && ix < view.frame.width && iy < view.frame.height) { const inst = view.series.instanceAt(view.index).inst; const raw = view.frame.gray[iy * view.frame.width + ix]; view.probe = { x: ix, y: iy, v: fmt(raw * inst.slope + inst.intercept, 1) }; }
+      else view.probe = null;
+      updateOverlay();
+    }
+    return;
+  }
+  const dx = x - drag.x, dy = y - drag.y; drag.moved = drag.moved || Math.hypot(x - drag.sx, y - drag.sy) > 2;
+  if (drag.mode === 'wl') {
+    const full = view.series.fullWindow || { w: 256 }; const k = full.w / 400; // whole drag across ~400px spans the data range
+    applyWL(drag.wc + dy * k, drag.ww + dx * k); $('preset').value = 'custom';
+  } else if (drag.mode === 'pan') { view.pan.x = drag.px + (x - drag.sx); view.pan.y = drag.py + (y - drag.sy); view.fit = false; draw(); }
+  else if (drag.mode === 'ruler' && g) { view.ruler.p2 = screenToImg(x, y, g); draw(); }
+  drag.x = x; drag.y = y;
+});
+const endDrag = (e) => { if (drag && drag.mode === 'ruler' && !drag.moved) view.ruler = null; drag = null; draw(); };
+viewport.addEventListener('pointerup', endDrag); viewport.addEventListener('pointercancel', endDrag);
+viewport.addEventListener('pointerleave', () => { view.probe = null; updateOverlay(); });
+viewport.addEventListener('contextmenu', (e) => e.preventDefault());
+viewport.addEventListener('wheel', (e) => {
+  if (!view.series) return; e.preventDefault();
+  if (e.ctrlKey || e.metaKey) { const rect = viewport.getBoundingClientRect(); setZoom(view.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - rect.left, e.clientY - rect.top); }
+  else step(e.deltaY > 0 ? 1 : -1);
+}, { passive: false });
+viewport.addEventListener('dblclick', fit);
+
+// touch: pinch to zoom handled through pointer events count
+const touches = new Map();
+viewport.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
+viewport.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'touch' || !touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size === 2) { drag = null; const [a, b] = [...touches.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (view.pinch) setZoom(view.zoom * d / view.pinch); view.pinch = d; }
+});
+const touchEnd = (e) => { touches.delete(e.pointerId); if (touches.size < 2) view.pinch = null; };
+viewport.addEventListener('pointerup', touchEnd); viewport.addEventListener('pointercancel', touchEnd);
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, select, textarea')) return;
+  const k = e.key;
+  if (k === '?' ) { $('help').classList.toggle('show'); return; }
+  if (k === 'Escape') { $('help').classList.remove('show'); view.ruler = null; view.rulerMode = false; $('btn-ruler').classList.remove('active'); viewport.classList.remove('ruler'); draw(); updateOverlay(); return; }
+  if (!view.series) return;
+  const map = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, PageDown: 10, PageUp: -10 };
+  if (k in map) { e.preventDefault(); step(map[k]); }
+  else if (k === 'Home') showFrame(0); else if (k === 'End') showFrame(view.series.count - 1);
+  else if (k === ' ') { e.preventDefault(); toggleCine(); }
+  else if (k === '+' || k === '=') setZoom(view.zoom * 1.25); else if (k === '-') setZoom(view.zoom / 1.25);
+  else if (k === 'f' || k === 'F' || k === '0') fit(); else if (k === 'r' || k === 'R') resetWL();
+  else if (k === 'i' || k === 'I') $('btn-invert').click(); else if (k === 'o' || k === 'O') $('btn-overlay').click();
+  else if (k === 'm' || k === 'M') $('btn-ruler').click();
+  else if (k === '[' || k === ']') { const i = study.series.indexOf(view.series) + (k === ']' ? 1 : -1); if (i >= 0 && i < study.series.length) selectSeries(i); }
+});
+
+$('slider').addEventListener('input', (e) => showFrame(+e.target.value));
+$('btn-prev').addEventListener('click', () => step(-1)); $('btn-next').addEventListener('click', () => step(1));
+$('btn-play').addEventListener('click', toggleCine);
+$('fps').addEventListener('change', () => { if (cineTimer) { stopCine(); toggleCine(); } });
+$('ww').addEventListener('input', () => { applyWL(view.wc, +$('ww').value); $('preset').value = 'custom'; });
+$('wc').addEventListener('input', () => { applyWL(+$('wc').value, view.ww); $('preset').value = 'custom'; });
+$('btn-reset-wl').addEventListener('click', resetWL);
+$('preset').addEventListener('change', (e) => {
+  const s = view.series; if (!s) return; const v = e.target.value;
+  const P = { 'ct-brain': [40, 80], 'ct-soft': [40, 400], 'ct-bone': [500, 2000], 'ct-lung': [-600, 1500] };
+  if (v === 'dicom') { const w = s.instances[0].window || s.defaultWindow; applyWL(w.c, w.w); if (!s.instances[0].window) toast('No window in the DICOM header; using auto'); }
+  else if (v === 'auto') applyWL(s.autoWindow.c, s.autoWindow.w);
+  else if (v === 'full') applyWL(s.fullWindow.c, s.fullWindow.w);
+  else if (P[v]) applyWL(P[v][0], P[v][1]);
+});
+$('btn-fit').addEventListener('click', fit);
+$('btn-invert').addEventListener('click', () => { view.invert = !view.invert; $('btn-invert').classList.toggle('active', view.invert); applyWL(view.wc, view.ww); });
+$('btn-overlay').addEventListener('click', () => { view.overlay = !view.overlay; $('btn-overlay').classList.toggle('active', view.overlay); updateOverlay(); });
+$('btn-smooth').addEventListener('click', () => { view.smooth = !view.smooth; $('btn-smooth').classList.toggle('active', view.smooth); draw(); });
+$('btn-ruler').addEventListener('click', () => { view.rulerMode = !view.rulerMode; $('btn-ruler').classList.toggle('active', view.rulerMode); viewport.classList.toggle('ruler', view.rulerMode); if (!view.rulerMode) view.ruler = null; draw(); updateOverlay(); });
+$('btn-panels').addEventListener('click', () => { const b = document.body; if (b.classList.contains('mobile-side')) { b.classList.remove('mobile-side'); b.classList.add('mobile-rail'); } else if (b.classList.contains('mobile-rail')) b.classList.remove('mobile-rail'); else b.classList.add('mobile-side'); draw(); });
+$('btn-help').addEventListener('click', () => $('help').classList.add('show')); $('btn-help-close').addEventListener('click', () => $('help').classList.remove('show'));
+$('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').classList.remove('show'); });
+$('privacy').addEventListener('change', () => { updateOverlay(); updateTags(); });
+$('btn-alltags').addEventListener('click', () => { const el = $('alltags'); el.classList.toggle('show'); if (el.classList.contains('show') && view.series) el.textContent = allTagsText(view.series.instanceAt(view.index).inst.ds); });
+$('btn-copy-tags').addEventListener('click', async () => { if (!view.series) return; try { await navigator.clipboard.writeText(allTagsText(view.series.instanceAt(view.index).inst.ds)); toast('Tags copied'); } catch (e) { toast('Clipboard blocked: ' + e.message, true); } });
+$('btn-copy-summary').addEventListener('click', async () => { if (!study.ds) return; try { await navigator.clipboard.writeText(studySummary()); toast('Study summary copied as Markdown'); } catch (e) { toast('Clipboard blocked: ' + e.message, true); } });
+$('btn-sheet').addEventListener('click', makeSheet);
+$('btn-sheet-copy').addEventListener('click', async () => { try { await copyBlob(lastSheet); toast('Contact sheet copied. Paste it into the chat.'); } catch (e) { toast(e.message, true); } });
+$('btn-sheet-dl').addEventListener('click', () => download(lastSheet, `${safeName(view.series.description)}_sheet.png`));
+$('btn-copy-slice').addEventListener('click', async () => { if (!view.frame) return; try { await copyBlob(await canvasBlob(sliceCanvas())); toast('Slice copied'); } catch (e) { toast(e.message, true); } });
+$('btn-dl-slice').addEventListener('click', async () => { if (!view.frame) return; download(await canvasBlob(sliceCanvas()), `${safeName(view.series.description)}_${String(view.index + 1).padStart(3, '0')}.png`); });
+$('btn-pack').addEventListener('click', makePack);
+function sliceCanvas() { // current slice at native resolution with aspect correction
+  const s = view.series; const c = document.createElement('canvas'); c.width = view.off.width; c.height = Math.round(view.off.height * s.aspect);
+  const cx = c.getContext('2d'); cx.imageSmoothingEnabled = true; cx.drawImage(view.off, 0, 0, c.width, c.height); return c;
+}
+
+// file opening
+$('btn-open').addEventListener('click', () => $('file-input').click()); $('btn-open-2').addEventListener('click', () => $('file-input').click());
+$('btn-open-folder').addEventListener('click', () => $('folder-input').click());
+$('file-input').addEventListener('change', (e) => { if (e.target.files.length) loadFiles([...e.target.files]); e.target.value = ''; });
+$('folder-input').addEventListener('change', (e) => { if (e.target.files.length) loadFiles([...e.target.files].map(f => Object.assign(f, { name: f.webkitRelativePath || f.name }))); e.target.value = ''; });
+for (const ev of ['dragenter', 'dragover']) document.addEventListener(ev, (e) => { e.preventDefault(); $('dropzone').classList.add('over'); $('dropzone').classList.remove('hidden'); });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) { $('dropzone').classList.remove('over'); if (study.series.length) $('dropzone').classList.add('hidden'); } });
+document.addEventListener('drop', async (e) => {
+  e.preventDefault(); $('dropzone').classList.remove('over');
+  const files = await filesFromDrop(e.dataTransfer);
+  if (files.length) loadFiles(files); else if (study.series.length) $('dropzone').classList.add('hidden');
+});
+async function filesFromDrop(dt) {
+  const items = [...(dt.items || [])].filter(i => i.kind === 'file');
+  const out = [];
+  const walk = async (entry, path) => {
+    if (entry.isFile) { const f = await new Promise((res, rej) => entry.file(res, rej)); out.push(Object.assign(f, { name: path + f.name })); }
+    else if (entry.isDirectory) { const reader = entry.createReader(); let batch; do { batch = await new Promise((res, rej) => reader.readEntries(res, rej)); for (const en of batch) await walk(en, path + entry.name + '/'); } while (batch.length); }
+  };
+  if (items.length && items[0].webkitGetAsEntry) { for (const it of items) { const en = it.webkitGetAsEntry(); if (en) await walk(en, ''); } }
+  if (!out.length) out.push(...dt.files);
+  return out;
+}
+
+// sample study: fetched from the repository, or embedded when published as an artifact
+async function loadSample() {
+  try {
+    let data;
+    if (window.SAMPLE_B64) { const bin = atob(window.SAMPLE_B64); data = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i); }
+    else { const r = await fetch('sample/synthetic_mri.zip'); if (!r.ok) throw new Error(`HTTP ${r.status}`); data = new Uint8Array(await r.arrayBuffer()); }
+    await loadFiles([{ name: 'synthetic_mri.zip', data }]);
+  } catch (e) { toast(`Could not load the sample study (${e.message}). If you opened this file directly from disk, serve it over http or use the GitHub Pages link.`, true); }
+}
+$('btn-sample').addEventListener('click', loadSample); $('btn-sample-2').addEventListener('click', loadSample);
+
+new ResizeObserver(() => { dpr = window.devicePixelRatio || 1; draw(); }).observe(viewport);
+window.addEventListener('beforeunload', (e) => { if (study.series.length) { e.preventDefault(); e.returnValue = ''; } });
+
+// expose for tests
+window.Lightbox = { study, view, loadFiles, selectSeries, showFrame, parseDicom, readZip, decodeJpegLossless, decodeRLE, renderContactSheet, studySummary, applyWL };
+</script>
+</body>
+</html>
