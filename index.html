@@ -1597,9 +1597,10 @@ async function renderContactSheet(s, opts) {
   const ds = s.ds; cx.font = '14px IBM Plex Sans, sans-serif'; cx.fillStyle = '#fff'; cx.textAlign = 'left';
   const title = [opts.privacy ? '' : `${(ds.str(T.PatientName) || '').replace(/\^/g, ' ')} ${ds.str(T.PatientID) || ''}`.trim(), ds.str(T.StudyDate), `S${s.number ?? '?'} ${s.description}`, `${s.modality} ${s.plane}`.trim(), `${s.cols}×${s.rows} ×${n}`,
     s.spacing ? `${fmt(s.spacing[1], 2)}×${fmt(s.spacing[0], 2)}×${fmt(s.thickness)} mm` : '', s.isColor ? '' : `W/L ${fmt(ww)}/${fmt(wc)}`].filter(Boolean).join('  |  ');
-  cx.fillText(title, 8, 20);
+  const fitText = (txt, maxW) => { if (cx.measureText(txt).width <= maxW) return txt; while (txt.length > 1 && cx.measureText(txt + '…').width > maxW) txt = txt.slice(0, -1); return txt + '…'; };
+  cx.fillText(fitText(title, c.width - 16), 8, 20);
   cx.font = '12px IBM Plex Mono, monospace'; cx.fillStyle = '#c9d1dc';
-  cx.fillText([...acquisitionBits(s), `slices ${n}`, `tiles show slice number and position along the slice normal`].join('  |  '), 8, 39);
+  cx.fillText(fitText([...acquisitionBits(s), `${n} slices`].join('  |  '), c.width - 16), 8, 39);
   return c;
 }
 // Markdown that travels with a series' sheet, so each panel is self-describing.
