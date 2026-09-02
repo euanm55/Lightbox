@@ -1519,7 +1519,23 @@ async function renderContactSheet(s, opts) {
   return c;
 }
 function canvasBlob(c) { return new Promise(r => c.toBlob(r, 'image/png')); }
-function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+// When published as a claude.ai artifact, files are handed over through the
+// runtime's save prompt; everywhere else a plain download link is used.
+let hostDownloads = null;
+if (window.claude && typeof window.claude.use === 'function') window.claude.use('downloads').then(d => { hostDownloads = d; }).catch(() => {});
+async function download(blob, name) {
+  if (hostDownloads) {
+    try { await hostDownloads.save({ filename: name, data: blob }); toast(`Saved ${name}`); }
+    catch (e) {
+      const code = e && e.code;
+      if (code === 'declined') return;
+      if (code === 'rejected_extension' || code === 'extension_not_enabled') toast(`This viewer cannot save .${name.split('.').pop()} files here. Use the GitHub Pages copy of Lightbox for that, or copy the images to the clipboard.`, true);
+      else toast(`Save failed: ${(e && e.message) || e}`, true);
+    }
+    return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
 async function copyBlob(blob) {
   if (!navigator.clipboard || !window.ClipboardItem) throw new Error('Clipboard images need a secure (https) page in a current browser');
   await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
